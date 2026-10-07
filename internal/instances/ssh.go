@@ -117,11 +117,16 @@ func (s *Service) enableSSH(ctx context.Context, name string, image incus.Image,
 	if unit == "" {
 		unit = "sshd"
 	}
+	// Restart first: a package install often auto-starts sshd with the
+	// image default config, and enable/start is a no-op on a running
+	// service, which would leave the old policy active.
 	starts := []string{
+		"systemctl restart " + unit,
 		"systemctl enable --now " + unit,
+		"service " + unit + " restart",
 		"service " + unit + " start",
-		"rc-update add sshd default && rc-service sshd start",
-		"/usr/sbin/sshd",
+		"rc-update add sshd default && rc-service sshd restart",
+		"pkill -x sshd; sleep 1; /usr/sbin/sshd",
 	}
 	var lastErr error
 	for _, start := range starts {
@@ -140,6 +145,31 @@ func (s *Service) enableSSH(ctx context.Context, name string, image incus.Image,
 		return fmt.Errorf("sshd is not running: %w", err)
 	}
 	return nil
+}
+
+// WaitForAgent polls until exec works inside the instance. Containers
+// answer immediately; virtual machines need their guest agent booted,
+// which lags Start by a minute or more.
+func (s *Service) WaitForAgent(ctx context.Context, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := s.app.Incus.Exec(attempt, name, "", "true")
+		cancel()
+		if err == nil {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("guest agent did not respond for %s", name)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 // ValidateSSHKey checks an SSH public key the way sshd expects it:

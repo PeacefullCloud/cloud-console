@@ -309,6 +309,7 @@ type settingsData struct {
 	TOTPEnabled     bool
 	TOTPSetupSecret string
 	TOTPSetupURL    string
+	TOTPSetupQR     string // data-URI PNG of the setup URL, for scanning
 
 	MetricsInterval  int
 	MetricsRetention int

@@ -1,11 +1,14 @@
 package web
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/skip2/go-qrcode"
 
 	"github.com/peaceful/cloud-console/internal/auth"
 	"github.com/peaceful/cloud-console/internal/database"
@@ -389,6 +392,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("totp") == "setup" && !fresh.TOTPEnabled && fresh.TOTPSecret != "" {
 				data.TOTPSetupSecret = fresh.TOTPSecret
 				data.TOTPSetupURL = auth.ProvisioningURL(fresh.Username, fresh.TOTPSecret)
+				data.TOTPSetupQR = totpQRCode(data.TOTPSetupURL)
 			}
 		}
 	}
@@ -518,6 +522,19 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 
 	s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", nil)
 	s.succeed(w, r, "/settings", "Two-factor authentication is off.")
+}
+
+// totpQRCode renders the setup URL as a scannable PNG data URI. An empty
+// string on failure leaves manual entry, which always works.
+func totpQRCode(otpURL string) string {
+	if otpURL == "" {
+		return ""
+	}
+	png, err := qrcode.Encode(otpURL, qrcode.Medium, 256)
+	if err != nil {
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 }
 
 // maskSecret hides all but the first and last characters of a credential.

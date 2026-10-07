@@ -218,7 +218,14 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		return fmt.Errorf("start instance: %w", err)
 	}
 
-	// 5. Configure SSH access. A failure here is not fatal: the instance
+	// 5. Wait for the guest agent. Containers answer exec immediately;
+	// virtual machines need the agent booted before any setup command runs.
+	s.app.Jobs.Progress(job.ID, 58, "Waiting for the guest agent")
+	if err := s.WaitForAgent(ctx, req.Name, 10*time.Minute); err != nil {
+		s.app.Log.Warn("guest agent not ready", "instance", req.Name, "err", err)
+	}
+
+	// 6. Configure SSH access. A failure here is not fatal: the instance
 	// runs and stays manageable with incus exec, but the user is told.
 	s.app.Jobs.Progress(job.ID, 62, "Setting up SSH access")
 	if err := s.EnsureSSH(ctx, req.Name, image, req.RootPassword, req.SSHKey); err != nil {
@@ -228,7 +235,7 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		s.app.Jobs.Progress(job.ID, 68, "SSH access ready for root")
 	}
 
-	// 6. Wait until it has a network address.
+	// 7. Wait until it has a network address.
 	s.app.Jobs.Progress(job.ID, 70, "Waiting for the network to come up")
 	ip, err := s.WaitForIP(ctx, req.Name, 90*time.Second)
 	if err != nil {
@@ -236,7 +243,7 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		s.app.Log.Warn("instance has no address yet", "instance", req.Name, "err", err)
 	}
 
-	// 7. Persist console bookkeeping.
+	// 8. Persist console bookkeeping.
 	s.app.Jobs.Progress(job.ID, 85, "Recording instance in the console")
 	meta := &models.InstanceMeta{
 		Name:        req.Name,
@@ -254,14 +261,14 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		return fmt.Errorf("save instance metadata: %w", err)
 	}
 
-	// 8. Attach the optional domain.
+	// 9. Attach the optional domain.
 	if req.Domain != "" {
 		if _, err := s.app.DB.CreateDomain(req.Name, req.Domain, 80); err != nil {
 			s.app.Log.Warn("could not attach domain", "instance", req.Name, "domain", req.Domain, "err", err)
 		}
 	}
 
-	// 9. Re-render Caddy so the domain reaches the new container.
+	// 10. Re-render Caddy so the domain reaches the new container.
 	s.app.Jobs.Progress(job.ID, 95, "Applying web routing")
 	s.notifyChanged(ctx, req.Name)
 

@@ -181,9 +181,14 @@ S3_USE_SSL=true</pre>
           <button class="btn btn-block" type="submit">Turn off two-factor</button>
         </form>
         {{else if .TOTPSetupSecret}}
-        <p class="muted small">Enter this key manually in your authenticator app (e.g. Google Authenticator, Authy, 1Password), then confirm with a code.</p>
+        <p class="muted small">Scan this with your authenticator app (e.g. Google Authenticator, Authy, 1Password), then confirm with a code. Manual entry works too.</p>
+        {{if .TOTPSetupQR}}
+        <div style="display:grid;place-items:center;background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:16px">
+          <img src="{{.TOTPSetupQR}}" alt="Two-factor setup QR code" width="200" height="200">
+        </div>
+        {{end}}
         <div class="field">
-          <label>Secret key</label>
+          <label>Secret key (manual entry)</label>
           <div class="copy-field">
             <input type="text" readonly value="{{.TOTPSetupSecret}}" onclick="this.select()">
             <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupSecret}}">Copy</button>
