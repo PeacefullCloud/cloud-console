@@ -15,7 +15,12 @@ type Image struct {
 	Label       string // display name, e.g. "Ubuntu 24.04 LTS"
 	Category    string // os | app
 	Description string
-	Kind        string // container | virtual-machine
+	Kind        string // default instance type: container | virtual-machine
+
+	// SupportsVM reports whether the image can back a virtual machine as
+	// well as a container. The remote image server resolves the same alias
+	// to the matching variant for the requested instance type.
+	SupportsVM bool
 
 	// Incus image source.
 	Alias    string // e.g. ubuntu/24.04 (local alias or simplestreams alias)
@@ -35,39 +40,39 @@ func DefaultCatalog() []Image {
 	return []Image{
 		{
 			ID: "ubuntu-24.04", Label: "Ubuntu 24.04 LTS", Category: "os", Kind: "container",
-			Description: "Ubuntu 24.04 LTS container image.",
+			Description: "Ubuntu 24.04 LTS.",
 			Alias:       "ubuntu/24.04", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "ubuntu", Group: "Linux operating system",
+			Icon: "ubuntu", Group: "Linux operating system", SupportsVM: true,
 		},
 		{
 			ID: "ubuntu-22.04", Label: "Ubuntu 22.04 LTS", Category: "os", Kind: "container",
-			Description: "Ubuntu 22.04 LTS container image.",
+			Description: "Ubuntu 22.04 LTS.",
 			Alias:       "ubuntu/22.04", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "ubuntu", Group: "Linux operating system",
+			Icon: "ubuntu", Group: "Linux operating system", SupportsVM: true,
 		},
 		{
 			ID: "debian-13", Label: "Debian 13", Category: "os", Kind: "container",
-			Description: "Debian 13 (trixie) container image.",
+			Description: "Debian 13 (trixie).",
 			Alias:       "debian/13", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "debian", Group: "Linux operating system",
+			Icon: "debian", Group: "Linux operating system", SupportsVM: true,
 		},
 		{
 			ID: "debian-12", Label: "Debian 12", Category: "os", Kind: "container",
-			Description: "Debian 12 (bookworm) container image.",
+			Description: "Debian 12 (bookworm).",
 			Alias:       "debian/12", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "debian", Group: "Linux operating system",
+			Icon: "debian", Group: "Linux operating system", SupportsVM: true,
 		},
 		{
 			ID: "almalinux-9", Label: "AlmaLinux 9", Category: "os", Kind: "container",
-			Description: "AlmaLinux 9 container image.",
+			Description: "AlmaLinux 9.",
 			Alias:       "almalinux/9", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "almalinux", Group: "Linux operating system",
+			Icon: "almalinux", Group: "Linux operating system", SupportsVM: true,
 		},
 		{
 			ID: "alpine-3.20", Label: "Alpine 3.20", Category: "os", Kind: "container",
-			Description: "Minimal Alpine Linux container image.",
+			Description: "Minimal Alpine Linux.",
 			Alias:       "alpine/3.20", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "alpine", Group: "Linux operating system",
+			Icon: "alpine", Group: "Linux operating system", SupportsVM: true,
 		},
 		{
 			ID: "wordpress", Label: "WordPress", Category: "app", Kind: "container",

@@ -381,6 +381,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data.RunningCount = running
 	}
 
+	// Two-factor state for the signed-in user. A pending setup secret is
+	// shown once, right after generation.
+	if me := userFrom(r); me != nil {
+		if fresh, err := s.App.DB.GetUser(me.ID); err == nil {
+			data.TOTPEnabled = fresh.TOTPEnabled
+			if r.URL.Query().Get("totp") == "setup" && !fresh.TOTPEnabled && fresh.TOTPSecret != "" {
+				data.TOTPSetupSecret = fresh.TOTPSecret
+				data.TOTPSetupURL = auth.ProvisioningURL(fresh.Username, fresh.TOTPSecret)
+			}
+		}
+	}
+
 	s.render(w, r, "settings", http.StatusOK, data)
 }
 
@@ -423,6 +435,89 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	s.clearCookie(w, sessionCookie)
 	s.setFlash(w, "ok", "Password changed. Please sign in again.")
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// handleTOTPSetup generates a fresh secret and shows it once for the user
+// to enter into their authenticator app. Nothing is enforced yet.
+func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r)
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	secret, _, err := auth.GenerateTOTPSecret(user.Username)
+	if err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+	if err := s.App.DB.SetTOTPSecret(user.ID, secret); err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+
+	s.App.Activity.Record(user.Username, "Start two-factor setup", user.Username, "", nil)
+	http.Redirect(w, r, "/settings?totp=setup", http.StatusSeeOther)
+}
+
+// handleTOTPEnable confirms a code from the authenticator app and turns
+// enforcement on.
+func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r)
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	fresh, err := s.App.DB.GetUser(user.ID)
+	if err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+
+	code := strings.TrimSpace(r.FormValue("code"))
+	if !auth.VerifyTOTPCode(fresh.TOTPSecret, code) {
+		s.App.Activity.Record(user.Username, "Confirm two-factor", user.Username, "", errors.New("invalid code"))
+		s.fail(w, r, "/settings?totp=setup", errors.New("incorrect code — try the current code from your app"))
+		return
+	}
+
+	if err := s.App.DB.SetTOTPEnabled(user.ID, true); err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+
+	s.App.Activity.Record(user.Username, "Enable two-factor", user.Username, "", nil)
+	s.succeed(w, r, "/settings", "Two-factor authentication is on.")
+}
+
+// handleTOTPDisable turns enforcement off after confirming the password.
+// The secret is cleared entirely.
+func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r)
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	fresh, err := s.App.DB.GetUser(user.ID)
+	if err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+	if !auth.VerifyPassword(fresh.PasswordHash, r.FormValue("current_password")) {
+		s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", auth.ErrInvalidCredentials)
+		s.fail(w, r, "/settings", errors.New("incorrect password"))
+		return
+	}
+
+	if err := s.App.DB.ClearTOTP(user.ID); err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+
+	s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", nil)
+	s.succeed(w, r, "/settings", "Two-factor authentication is off.")
 }
 
 // maskSecret hides all but the first and last characters of a credential.

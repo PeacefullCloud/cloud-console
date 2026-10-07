@@ -196,6 +196,34 @@
     if (event.target.closest('input[name="size"]')) {
       syncCustomPlan();
     }
+    if (event.target.closest('input[name="platform"]')) {
+      syncInstanceType();
+    }
   });
   syncCustomPlan();
+  syncInstanceType();
+
+  // Application images are container-only; disable the VM option while the
+  // apps platform is selected. The server validates this regardless.
+  function syncInstanceType() {
+    var platform = document.querySelector('input[name="platform"]:checked');
+    var vm = document.querySelector('input[name="kind"][value="virtual-machine"]');
+    var container = document.querySelector('input[name="kind"][value="container"]');
+    var hint = document.getElementById("kind-hint");
+    if (!vm || !container) {
+      return;
+    }
+    if (platform && platform.value === "apps") {
+      vm.disabled = true;
+      container.checked = true;
+      if (hint) {
+        hint.textContent = "The selected application image runs as a container only.";
+      }
+      return;
+    }
+    vm.disabled = false;
+    if (hint) {
+      hint.textContent = "Application images run as containers only; operating systems run as either type.";
+    }
+  }
 })();

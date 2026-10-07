@@ -210,6 +210,7 @@ func (s *Server) createData(w http.ResponseWriter, r *http.Request) (createData,
 		Form: createForm{
 			Platform:    platform,
 			Image:       selectedImage,
+			Kind:        instances.KindContainer,
 			Size:        sizes[2].Value(),
 			StoragePool: defaultPool,
 			CPU:         sizes[2].CPU,
@@ -258,11 +259,15 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 	req := instances.CreateRequest{
 		Name:        strings.ToLower(strings.TrimSpace(r.FormValue("name"))),
 		ImageID:     r.FormValue("image"),
+		Kind:        strings.TrimSpace(r.FormValue("kind")),
 		Domain:      strings.TrimSpace(r.FormValue("domain")),
 		Notes:       strings.TrimSpace(r.FormValue("notes")),
 		StoragePool: r.FormValue("storage_pool"),
 		OwnerID:     user.ID,
 		OwnerName:   user.Username,
+	}
+	if req.Kind == "" {
+		req.Kind = instances.KindContainer
 	}
 
 	// A preset plan carries its own resources; "custom" uses the number fields.

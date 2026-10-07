@@ -78,6 +78,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /login", s.handleLoginPage)
 	m.HandleFunc("POST /login", s.handleLoginSubmit)
+	m.HandleFunc("POST /login/totp", s.handleLoginTOTPSubmit)
 	m.HandleFunc("POST /logout", s.handleLogout)
 
 	m.HandleFunc("GET /instances", s.handleInstances)
@@ -118,6 +119,9 @@ func (s *Server) routes() {
 
 	m.HandleFunc("POST /settings/users", s.handleUserCreate)
 	m.HandleFunc("POST /settings/password", s.handlePasswordChange)
+	m.HandleFunc("POST /settings/totp/setup", s.handleTOTPSetup)
+	m.HandleFunc("POST /settings/totp/enable", s.handleTOTPEnable)
+	m.HandleFunc("POST /settings/totp/disable", s.handleTOTPDisable)
 
 	m.HandleFunc("GET /jobs/active", s.handleActiveJobs)
 	m.HandleFunc("GET /jobs/stream", s.handleJobsStream)
@@ -150,8 +154,9 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 // withAuth resolves the session and rejects unauthenticated requests.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	public := map[string]bool{
-		"/login":   true,
-		"/healthz": true,
+		"/login":      true,
+		"/login/totp": true,
+		"/healthz":    true,
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

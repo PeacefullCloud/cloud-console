@@ -166,6 +166,54 @@ S3_USE_SSL=true</pre>
       </div>
 
       <div class="card">
+        <div class="card-head">
+          <div class="grow"><div class="card-title">Two-factor authentication</div></div>
+          {{if .TOTPEnabled}}<span class="pill pill-ok">on</span>{{else}}<span class="pill">off</span>{{end}}
+        </div>
+        {{if .TOTPEnabled}}
+        <p class="muted small">Sign-in asks for a code from your authenticator app after the password.</p>
+        <form method="post" action="/settings/totp/disable">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="totp_current_password">Confirm with your password to turn it off</label>
+            <input id="totp_current_password" name="current_password" type="password" required>
+          </div>
+          <button class="btn btn-block" type="submit">Turn off two-factor</button>
+        </form>
+        {{else if .TOTPSetupSecret}}
+        <p class="muted small">Enter this key manually in your authenticator app (e.g. Google Authenticator, Authy, 1Password), then confirm with a code.</p>
+        <div class="field">
+          <label>Secret key</label>
+          <div class="copy-field">
+            <input type="text" readonly value="{{.TOTPSetupSecret}}" onclick="this.select()">
+            <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupSecret}}">Copy</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Setup address (manual entry)</label>
+          <div class="copy-field">
+            <input type="text" readonly value="{{.TOTPSetupURL}}" onclick="this.select()">
+            <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupURL}}">Copy</button>
+          </div>
+        </div>
+        <form method="post" action="/settings/totp/enable">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="totp_code">6-digit code from your app</label>
+            <input id="totp_code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required placeholder="123456">
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">Confirm and turn on</button>
+        </form>
+        {{else}}
+        <p class="muted small">Add a code from your authenticator app as a second step at sign-in.</p>
+        <form method="post" action="/settings/totp/setup">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <button class="btn btn-block" type="submit">Set up two-factor</button>
+        </form>
+        {{end}}
+      </div>
+
+      <div class="card">
         <div class="card-head"><div class="grow"><div class="card-title">Session</div></div></div>
         <dl class="kv">
           <dt>Signed in as</dt><dd class="strong">{{.User.Username}}</dd>

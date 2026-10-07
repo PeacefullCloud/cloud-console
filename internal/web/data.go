@@ -89,6 +89,7 @@ type createForm struct {
 	Notes       string
 	Platform    string
 	Image       string
+	Kind        string // container | virtual-machine
 	Size        string
 	StoragePool string
 	CPU         int
@@ -301,6 +302,12 @@ type settingsData struct {
 	SessionCount int
 	SessionTTL   int
 
+	// Two-factor state for the signed-in user, plus a pending setup secret
+	// shown once right after generation.
+	TOTPEnabled     bool
+	TOTPSetupSecret string
+	TOTPSetupURL    string
+
 	MetricsInterval  int
 	MetricsRetention int
 	JobWorkers       int
@@ -320,6 +327,17 @@ type loginData struct {
 	Notice   string
 	Next     string
 	Username string
+}
+
+// totpData is the second login step: the password was correct and the user
+// proves possession of the authenticator app.
+type totpData struct {
+	Title     string
+	CSRF      string
+	Error     string
+	Challenge string
+	Username  string
+	Next      string
 }
 
 // --- size catalog ---------------------------------------------------------

@@ -87,6 +87,33 @@
       <div class="pick-grid" id="blueprints">
         {{template "blueprint_grid" .}}
       </div>
+
+      <div class="label" style="margin-top:20px">Select instance type</div>
+      <div class="pick-grid" id="instance-types">
+        <label class="pick">
+          <input type="radio" name="kind" value="container"
+                 {{if ne $.Form.Kind "virtual-machine"}}checked{{end}}>
+          <span class="dot"></span>
+          <span class="os-icon os-custom">C</span>
+          <span class="pick-body">
+            <span class="pick-title">Container</span>
+            <span class="pick-desc">Shares the host kernel. Fast to create, dense, ideal for websites and services.</span>
+            <span class="pick-note">~130 MB image · starts in seconds</span>
+          </span>
+        </label>
+        <label class="pick">
+          <input type="radio" name="kind" value="virtual-machine"
+                 {{if eq $.Form.Kind "virtual-machine"}}checked{{end}}>
+          <span class="dot"></span>
+          <span class="os-icon os-custom">V</span>
+          <span class="pick-body">
+            <span class="pick-title">Virtual machine</span>
+            <span class="pick-desc">Full kernel isolation via KVM. For untrusted tenants or kernel-specific needs.</span>
+            <span class="pick-note">Needs 10+ GB disk · slower first boot</span>
+          </span>
+        </label>
+      </div>
+      <p class="hint" id="kind-hint">Application images run as containers only; operating systems run as either type.</p>
     </div>
 
     <div class="card">

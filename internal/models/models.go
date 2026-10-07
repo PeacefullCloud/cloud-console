@@ -15,6 +15,11 @@ type User struct {
 	Role         string // admin | operator | viewer
 	CreatedAt    time.Time
 	LastLoginAt  *time.Time
+
+	// TOTP two-factor state. Secret is stored from setup start; Enabled
+	// flips on only after a code from the authenticator app is confirmed.
+	TOTPSecret  string
+	TOTPEnabled bool
 }
 
 // InstanceMeta is the console-side record for an Incus instance. Resource limits

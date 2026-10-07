@@ -933,16 +933,7 @@ details.disclosure .disclosure-body { padding: 0 16px 16px; }
   line-height: 1.2;
   margin: 0 0 12px;
 }
-.login-pipe {
-  font-size: 11.5px;
-  color: var(--blue-100);
-  background: rgba(255, 255, 255, .12);
-  border: 1px solid rgba(255, 255, 255, .22);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  margin: 0 0 20px;
-}
-.login-feats { list-style: none; margin: 0 0 20px; padding: 0; }
+.login-feats { list-style: none; margin: 6px 0 20px; padding: 0; }
 .login-feats li { padding: 7px 0; border-top: 1px solid rgba(255, 255, 255, .18); }
 .login-feats li:first-child { border-top: 0; }
 .login-feats strong { display: block; font-size: 13.5px; }

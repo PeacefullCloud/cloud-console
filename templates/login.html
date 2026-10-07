@@ -17,8 +17,7 @@
         <span class="name">Peaceful<strong>Cloud</strong></span>
       </div>
       <p class="login-family">Console · the compute piece</p>
-      <h2>Incus instances,<br>Lightsail-simple.</h2>
-      <p class="login-pipe mono">HTML + HTMX &rarr; Go &rarr; Incus &rarr; ZFS</p>
+      <h2>Servers, simplified.</h2>
       <ul class="login-feats">
         <li><strong>Instances</strong><span>create, start, resize, rebuild</span></li>
         <li><strong>Domains</strong><span>automatic HTTPS via Caddy</span></li>
@@ -26,11 +25,11 @@
         <li><strong>Backups</strong><span>portable archives, optional S3</span></li>
         <li><strong>Monitoring</strong><span>CPU, memory, disk, network</span></li>
       </ul>
-      <p class="login-secure">Incus is reached over its local Unix socket. The Incus API is never exposed to the internet.</p>
+      <p class="login-secure">The server daemon is reached over a local socket. The management API is never exposed to the internet.</p>
     </aside>
     <div class="login-main">
       <h1>Sign in</h1>
-      <p class="muted small login-sub">Manage Incus instances on this server.</p>
+      <p class="muted small login-sub">Manage servers on this host.</p>
 
       {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
       {{if .Notice}}<div class="flash flash-info">{{.Notice}}</div>{{end}}
@@ -51,6 +50,63 @@
 
       <p class="faint small login-foot">
         First run? The bootstrap administrator password is printed once in the server log.
+      </p>
+    </div>
+  </div>
+</div>
+</body>
+</html>
+{{end}}
+
+{{define "totp_page"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two-factor authentication · Peaceful Cloud Console</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+</head>
+<body>
+<div class="login-page">
+  <div class="login-split">
+    <aside class="login-side">
+      <div class="login-brand">
+        <span class="brand-mark">P</span>
+        <span class="name">Peaceful<strong>Cloud</strong></span>
+      </div>
+      <p class="login-family">Console · the compute piece</p>
+      <h2>Servers, simplified.</h2>
+      <ul class="login-feats">
+        <li><strong>Instances</strong><span>create, start, resize, rebuild</span></li>
+        <li><strong>Domains</strong><span>automatic HTTPS via Caddy</span></li>
+        <li><strong>Snapshots</strong><span>instant local rollback</span></li>
+        <li><strong>Backups</strong><span>portable archives, optional S3</span></li>
+        <li><strong>Monitoring</strong><span>CPU, memory, disk, network</span></li>
+      </ul>
+      <p class="login-secure">The server daemon is reached over a local socket. The management API is never exposed to the internet.</p>
+    </aside>
+    <div class="login-main">
+      <h1>Check your app</h1>
+      <p class="muted small login-sub">Enter the 6-digit code for <strong>{{.Username}}</strong> from your authenticator app.</p>
+
+      {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+      <form method="post" action="/login/totp">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="hidden" name="challenge" value="{{.Challenge}}">
+        <input type="hidden" name="next" value="{{.Next}}">
+        <div class="field">
+          <label for="code">Authentication code</label>
+          <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                 autocomplete="one-time-code" autofocus required placeholder="123456">
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Verify</button>
+      </form>
+
+      <p class="faint small login-foot">
+        <a href="/login">Back to sign in</a>
       </p>
     </div>
   </div>

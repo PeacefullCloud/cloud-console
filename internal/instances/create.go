@@ -27,12 +27,24 @@ const (
 	MaxMemoryMB = 1024 * 1024 // 1 TiB
 	MinDiskGB   = 2
 	MaxDiskGB   = 10 * 1024 // 10 TiB
+
+	// MinVMDiskGB is the smallest root disk for a virtual machine. VM
+	// images are gigabytes before first boot, so a container-sized disk
+	// would fill immediately.
+	MinVMDiskGB = 10
+)
+
+// Instance kinds the wizard offers.
+const (
+	KindContainer = "container"
+	KindVM        = "virtual-machine"
 )
 
 // CreateRequest is the validated input from the "Create instance" wizard.
 type CreateRequest struct {
 	Name        string
 	ImageID     string
+	Kind        string // container | virtual-machine
 	CPU         int
 	MemoryMB    int
 	DiskGB      int
@@ -66,8 +78,24 @@ func (r *CreateRequest) Validate() error {
 		return fmt.Errorf("%w: disk must be between %d GB and %d GB", ErrInvalidSpec, MinDiskGB, MaxDiskGB)
 	}
 
-	if _, ok := incus.LookupImage(r.ImageID); !ok {
+	image, ok := incus.LookupImage(r.ImageID)
+	if !ok {
 		return fmt.Errorf("%w: unknown image %q", ErrInvalidSpec, r.ImageID)
+	}
+
+	if r.Kind == "" {
+		r.Kind = KindContainer
+	}
+	if r.Kind != KindContainer && r.Kind != KindVM {
+		return fmt.Errorf("%w: unknown instance type %q", ErrInvalidSpec, r.Kind)
+	}
+	if r.Kind == KindVM {
+		if !image.SupportsVM {
+			return fmt.Errorf("%w: %q is available as a container only", ErrInvalidSpec, image.Label)
+		}
+		if r.DiskGB < MinVMDiskGB {
+			return fmt.Errorf("%w: virtual machines need at least %d GB of disk", ErrInvalidSpec, MinVMDiskGB)
+		}
 	}
 
 	r.Domain = strings.ToLower(strings.TrimSpace(r.Domain))
@@ -122,7 +150,7 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 
 	post := incusapi.InstancesPost{
 		Name:   req.Name,
-		Type:   incusapi.InstanceType(image.Kind),
+		Type:   incusapi.InstanceType(req.Kind),
 		Source: image.Source(),
 		InstancePut: incusapi.InstancePut{
 			Profiles: []string{"default"},
@@ -181,7 +209,7 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		Name:        req.Name,
 		Image:       image.Alias,
 		ImageLabel:  image.Label,
-		Kind:        image.Kind,
+		Kind:        req.Kind,
 		CPU:         req.CPU,
 		MemoryMB:    req.MemoryMB,
 		DiskGB:      req.DiskGB,
