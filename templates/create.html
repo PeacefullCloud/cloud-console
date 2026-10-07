@@ -211,6 +211,23 @@
         <label for="notes">Notes (optional)</label>
         <input id="notes" name="notes" type="text" placeholder="Customer site, staging, ..." value="{{.Form.Notes}}">
       </div>
+
+      <div class="label" style="margin-top:20px">SSH access</div>
+      <p class="card-sub" style="margin-bottom:12px">At least one is required. SSH is set up automatically — connect as <span class="mono">root@&lt;private-ip&gt;</span>.</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="root_password">Root password</label>
+          <input id="root_password" name="root_password" type="password" minlength="8" autocomplete="new-password"
+                 placeholder="8+ characters" value="{{.Form.RootPassword}}">
+          <p class="hint">Enables password login for root.</p>
+        </div>
+        <div class="field">
+          <label for="ssh_key">SSH public key</label>
+          <input id="ssh_key" name="ssh_key" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="ssh-ed25519 AAAA..." value="{{.Form.SSHKey}}">
+          <p class="hint">Enables key login for root.</p>
+        </div>
+      </div>
     </div>
 
     <div class="btn-row mt-24">

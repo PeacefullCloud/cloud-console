@@ -189,6 +189,7 @@ func TestCreateRequestValidation(t *testing.T) {
 			CPU:      2,
 			MemoryMB: 2048,
 			DiskGB:   40,
+			SSHKey:   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0bS0XKz5K5U3zR2Q8mtexamplekey",
 		}
 	}
 
@@ -208,6 +209,10 @@ func TestCreateRequestValidation(t *testing.T) {
 		"unknown image":   func(r *instances.CreateRequest) { r.ImageID = "windows" },
 		"bad domain":      func(r *instances.CreateRequest) { r.Domain = "not a domain" },
 		"no dot domain":   func(r *instances.CreateRequest) { r.Domain = "localhost" },
+		"no ssh creds":    func(r *instances.CreateRequest) { r.SSHKey = "" },
+		"short password":  func(r *instances.CreateRequest) { r.SSHKey = ""; r.RootPassword = "short" },
+		"bad ssh key":     func(r *instances.CreateRequest) { r.SSHKey = "not-a-key" },
+		"vm tiny disk":    func(r *instances.CreateRequest) { r.Kind = "virtual-machine"; r.DiskGB = 5 },
 	}
 
 	for name, mutate := range bad {
@@ -226,5 +231,18 @@ func TestCreateRequestValidation(t *testing.T) {
 	}
 	if req.Domain != "example.com" {
 		t.Errorf("domain = %q, want it lowercased", req.Domain)
+	}
+
+	// Password-only SSH access and VM requests must validate too.
+	pwReq := valid()
+	pwReq.SSHKey = ""
+	pwReq.RootPassword = "correct-horse-8"
+	if err := pwReq.Validate(); err != nil {
+		t.Fatalf("a password-only request was rejected: %v", err)
+	}
+	vmReq := valid()
+	vmReq.Kind = "virtual-machine"
+	if err := vmReq.Validate(); err != nil {
+		t.Fatalf("a valid VM request was rejected: %v", err)
 	}
 }

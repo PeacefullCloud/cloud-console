@@ -22,6 +22,11 @@ type Image struct {
 	// to the matching variant for the requested instance type.
 	SupportsVM bool
 
+	// PackageManager selects the SSH server install command (apt | dnf |
+	// apk). SSHUnit is the systemd service name; empty means OpenRC.
+	PackageManager string
+	SSHUnit        string
+
 	// Incus image source.
 	Alias    string // e.g. ubuntu/24.04 (local alias or simplestreams alias)
 	Server   string // remote simplestreams server; empty means "local only"
@@ -42,42 +47,49 @@ func DefaultCatalog() []Image {
 			ID: "ubuntu-24.04", Label: "Ubuntu 24.04 LTS", Category: "os", Kind: "container",
 			Description: "Ubuntu 24.04 LTS.",
 			Alias:       "ubuntu/24.04", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "ubuntu", Group: "Linux operating system", SupportsVM: true,
+			Icon: "ubuntu", Group: "Linux operating system", SupportsVM: true, PackageManager: "apt", SSHUnit: "ssh",
 		},
 		{
 			ID: "ubuntu-22.04", Label: "Ubuntu 22.04 LTS", Category: "os", Kind: "container",
 			Description: "Ubuntu 22.04 LTS.",
 			Alias:       "ubuntu/22.04", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "ubuntu", Group: "Linux operating system", SupportsVM: true,
+			Icon: "ubuntu", Group: "Linux operating system", SupportsVM: true, PackageManager: "apt", SSHUnit: "ssh",
 		},
 		{
 			ID: "debian-13", Label: "Debian 13", Category: "os", Kind: "container",
 			Description: "Debian 13 (trixie).",
 			Alias:       "debian/13", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "debian", Group: "Linux operating system", SupportsVM: true,
+			Icon: "debian", Group: "Linux operating system", SupportsVM: true, PackageManager: "apt", SSHUnit: "ssh",
 		},
 		{
 			ID: "debian-12", Label: "Debian 12", Category: "os", Kind: "container",
 			Description: "Debian 12 (bookworm).",
 			Alias:       "debian/12", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "debian", Group: "Linux operating system", SupportsVM: true,
+			Icon: "debian", Group: "Linux operating system", SupportsVM: true, PackageManager: "apt", SSHUnit: "ssh",
 		},
 		{
 			ID: "almalinux-9", Label: "AlmaLinux 9", Category: "os", Kind: "container",
 			Description: "AlmaLinux 9.",
 			Alias:       "almalinux/9", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "almalinux", Group: "Linux operating system", SupportsVM: true,
+			Icon: "almalinux", Group: "Linux operating system", SupportsVM: true, PackageManager: "dnf", SSHUnit: "sshd",
+		},
+		{
+			ID: "rocky-9", Label: "Rocky Linux 9", Category: "os", Kind: "container",
+			Description: "Rocky Linux 9, stable RHEL-compatible.",
+			Alias:       "rockylinux/9", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
+			Icon: "rocky", Group: "Linux operating system", SupportsVM: true, PackageManager: "dnf", SSHUnit: "sshd",
 		},
 		{
 			ID: "alpine-3.20", Label: "Alpine 3.20", Category: "os", Kind: "container",
 			Description: "Minimal Alpine Linux.",
 			Alias:       "alpine/3.20", Server: "https://images.linuxcontainers.org", Protocol: "simplestreams",
-			Icon: "alpine", Group: "Linux operating system", SupportsVM: true,
+			Icon: "alpine", Group: "Linux operating system", SupportsVM: true, PackageManager: "apk", SSHUnit: "",
 		},
 		{
 			ID: "wordpress", Label: "WordPress", Category: "app", Kind: "container",
 			Description: "Prepared image with Caddy, PHP-FPM, WordPress and MariaDB. Build it locally first.",
 			Alias:       "wordpress-php8.3", Icon: "wordpress", Group: "Applications",
+			PackageManager: "apt", SSHUnit: "ssh",
 		},
 	}
 }

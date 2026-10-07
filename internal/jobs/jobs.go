@@ -155,6 +155,14 @@ func (m *Manager) Progress(jobID string, pct int, message string) {
 	}
 }
 
+// WipePayload blanks a job's stored payload, used once secrets in it have
+// been consumed so passwords do not linger in the jobs table.
+func (m *Manager) WipePayload(jobID string) {
+	if err := m.db.WipeJobPayload(jobID); err != nil {
+		m.log.Warn("could not wipe job payload", "job", jobID, "err", err)
+	}
+}
+
 func (m *Manager) push(id string) bool {
 	select {
 	case m.queue <- id:

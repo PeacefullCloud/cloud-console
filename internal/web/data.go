@@ -84,17 +84,19 @@ type poolInfo struct {
 }
 
 type createForm struct {
-	Name        string
-	Domain      string
-	Notes       string
-	Platform    string
-	Image       string
-	Kind        string // container | virtual-machine
-	Size        string
-	StoragePool string
-	CPU         int
-	MemoryMB    int
-	DiskGB      int
+	Name         string
+	Domain       string
+	Notes        string
+	Platform     string
+	Image        string
+	Kind         string // container | virtual-machine
+	RootPassword string
+	SSHKey       string
+	Size         string
+	StoragePool  string
+	CPU          int
+	MemoryMB     int
+	DiskGB       int
 }
 
 // --- instance detail ------------------------------------------------------

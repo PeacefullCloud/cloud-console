@@ -7,6 +7,7 @@
 package incus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -98,6 +99,89 @@ func (c *Client) Networks() ([]api.Network, error) {
 // StoragePoolResources returns used/total space for a pool.
 func (c *Client) StoragePoolResources(name string) (*api.ResourcesStoragePool, error) {
 	return c.srv.GetStoragePoolResources(name)
+}
+
+// Exec runs a command as root inside a running instance (container or VM
+// with a working agent) and returns trimmed combined output. Stdin content
+// is streamed to the command when non-empty.
+func (c *Client) Exec(ctx context.Context, name string, stdin string, cmd ...string) (string, error) {
+	var stdout, stderr strings.Builder
+	args := &incusclient.InstanceExecArgs{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+	if stdin != "" {
+		args.Stdin = strings.NewReader(stdin)
+	}
+	dataDone := make(chan bool, 1)
+	args.DataDone = dataDone
+
+	op, err := c.srv.ExecInstance(name, api.InstanceExecPost{
+		Command:     cmd,
+		WaitForWS:   true,
+		Interactive: false,
+		Width:       80,
+		Height:      24,
+	}, args)
+	if err != nil {
+		return "", fmt.Errorf("exec in %s: %w", name, err)
+	}
+
+	select {
+	case <-dataDone:
+	case <-ctx.Done():
+		_ = op.Cancel()
+		return "", fmt.Errorf("exec in %s: %w", name, ctx.Err())
+	}
+
+	if err := c.wait(ctx, op, "exec in "+name); err != nil {
+		return "", err
+	}
+
+	code := execReturnCode(op)
+	out := strings.TrimSpace(stdout.String())
+	if errOut := strings.TrimSpace(stderr.String()); errOut != "" {
+		out = strings.TrimSpace(out + "\n" + errOut)
+	}
+	if code != 0 {
+		return out, fmt.Errorf("exec in %s exited %d: %s", name, code, out)
+	}
+	return out, nil
+}
+
+// execReturnCode reads the command exit status from a finished exec operation.
+func execReturnCode(op incusclient.Operation) int {
+	raw := op.Get()
+	if raw.Metadata == nil {
+		return -1
+	}
+	if v, ok := raw.Metadata["return"].(float64); ok {
+		return int(v)
+	}
+	return -1
+}
+
+// PushFile writes content to a path inside a running instance.
+func (c *Client) PushFile(ctx context.Context, name, path, content string, uid, gid int64, mode os.FileMode) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- c.srv.CreateInstanceFile(name, path, incusclient.InstanceFileArgs{
+			Content: bytes.NewReader([]byte(content)),
+			UID:     uid,
+			GID:     gid,
+			Mode:    int(mode.Perm()),
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("write %s in %s: %w", path, name, err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("write %s in %s: %w", path, name, ctx.Err())
+	}
 }
 
 // ImageAliases lists locally available image aliases.

@@ -52,6 +52,11 @@ type CreateRequest struct {
 	Domain      string
 	Notes       string
 
+	// SSH access. At least one is required so every instance is reachable
+	// as root@<private-ip> without touching the host.
+	RootPassword string
+	SSHKey       string
+
 	OwnerID   int64
 	OwnerName string
 }
@@ -103,6 +108,20 @@ func (r *CreateRequest) Validate() error {
 		return fmt.Errorf("%w: %q is not a valid domain", ErrInvalidSpec, r.Domain)
 	}
 
+	r.RootPassword = strings.TrimSpace(r.RootPassword)
+	r.SSHKey = strings.TrimSpace(r.SSHKey)
+	if r.RootPassword == "" && r.SSHKey == "" {
+		return fmt.Errorf("%w: provide a root password or an SSH public key so the instance is reachable", ErrInvalidSpec)
+	}
+	if r.RootPassword != "" && len(r.RootPassword) < 8 {
+		return fmt.Errorf("%w: the root password must be at least 8 characters", ErrInvalidSpec)
+	}
+	if r.SSHKey != "" {
+		if err := ValidateSSHKey(r.SSHKey); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidSpec, err)
+		}
+	}
+
 	return nil
 }
 
@@ -139,6 +158,10 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 	if !ok {
 		return fmt.Errorf("%w: unknown image %q", ErrInvalidSpec, req.ImageID)
 	}
+
+	// The payload carries the root password; wipe it now that it is decoded
+	// so the secret does not linger in the jobs table.
+	defer s.app.Jobs.WipePayload(job.ID)
 
 	// 1. Build the instance definition.
 	s.app.Jobs.Progress(job.ID, 5, "Preparing instance definition")
@@ -195,7 +218,17 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		return fmt.Errorf("start instance: %w", err)
 	}
 
-	// 5. Wait until it has a network address.
+	// 5. Configure SSH access. A failure here is not fatal: the instance
+	// runs and stays manageable with incus exec, but the user is told.
+	s.app.Jobs.Progress(job.ID, 62, "Setting up SSH access")
+	if err := s.EnsureSSH(ctx, req.Name, image, req.RootPassword, req.SSHKey); err != nil {
+		s.app.Log.Warn("ssh setup incomplete", "instance", req.Name, "err", err)
+		s.app.Jobs.Progress(job.ID, 68, "SSH setup incomplete: "+err.Error())
+	} else {
+		s.app.Jobs.Progress(job.ID, 68, "SSH access ready for root")
+	}
+
+	// 6. Wait until it has a network address.
 	s.app.Jobs.Progress(job.ID, 70, "Waiting for the network to come up")
 	ip, err := s.WaitForIP(ctx, req.Name, 90*time.Second)
 	if err != nil {
@@ -203,7 +236,7 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		s.app.Log.Warn("instance has no address yet", "instance", req.Name, "err", err)
 	}
 
-	// 6. Persist console bookkeeping.
+	// 7. Persist console bookkeeping.
 	s.app.Jobs.Progress(job.ID, 85, "Recording instance in the console")
 	meta := &models.InstanceMeta{
 		Name:        req.Name,
@@ -221,14 +254,14 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		return fmt.Errorf("save instance metadata: %w", err)
 	}
 
-	// 7. Attach the optional domain.
+	// 8. Attach the optional domain.
 	if req.Domain != "" {
 		if _, err := s.app.DB.CreateDomain(req.Name, req.Domain, 80); err != nil {
 			s.app.Log.Warn("could not attach domain", "instance", req.Name, "domain", req.Domain, "err", err)
 		}
 	}
 
-	// 8. Re-render Caddy so the domain reaches the new container.
+	// 9. Re-render Caddy so the domain reaches the new container.
 	s.app.Jobs.Progress(job.ID, 95, "Applying web routing")
 	s.notifyChanged(ctx, req.Name)
 

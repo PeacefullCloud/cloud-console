@@ -109,6 +109,13 @@
       el.removeAttribute("aria-busy");
     }
   });
+  // Same drain-to-reload for the HTMX polling fallback (no EventSource).
+  document.addEventListener("htmx:afterSwap", function (event) {
+    var target = event.detail && event.detail.target;
+    if (target && target.id === "job-tracker") {
+      noteTrackerState(!!target.querySelector(".job"));
+    }
+  });
 
   // The job tracker polls itself; stop polling once every job has finished by
   // letting the server render an idle tracker with a slow interval.
@@ -118,6 +125,25 @@
   // long-lived request open and pushes the same job_list partial only when
   // jobs change, instead of HTMX polling GET /jobs/active every 2s/15s.
   // No EventSource (or a 401/stream error) falls back to that polling.
+  //
+  // The tracker only shows active jobs, so a finished job vanishes from it
+  // while the instance list on the page stays stale. When the tracker drains
+  // from having jobs to having none, reload once so the new instance (or the
+  // fresh state after a rebuild/delete elsewhere) appears without a manual
+  // refresh.
+  var initialTracker = document.getElementById("job-tracker");
+  var sawActiveJobs = !!(initialTracker && initialTracker.querySelector(".job"));
+  var jobReloadScheduled = false;
+  function noteTrackerState(hasJobs) {
+    if (hasJobs) {
+      sawActiveJobs = true;
+      return;
+    }
+    if (sawActiveJobs && !jobReloadScheduled) {
+      jobReloadScheduled = true;
+      setTimeout(function () { window.location.reload(); }, 1500);
+    }
+  }
   function swapJobTracker(html) {
     var current = document.getElementById("job-tracker");
     if (!current) {
@@ -135,6 +161,7 @@
     next.removeAttribute("hx-trigger");
     next.removeAttribute("hx-swap");
     next.removeAttribute("hx-target");
+    noteTrackerState(!!next.querySelector(".job"));
     current.replaceWith(next);
     if (window.htmx && typeof window.htmx.process === "function") {
       window.htmx.process(next);

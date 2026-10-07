@@ -23,6 +23,12 @@ func (d *DB) JobPayload(id string) (string, error) {
 	return payload, err
 }
 
+// WipeJobPayload blanks a job's stored payload.
+func (d *DB) WipeJobPayload(id string) error {
+	_, err := d.sql.Exec(`UPDATE jobs SET payload = '' WHERE id = ?`, id)
+	return err
+}
+
 // StartJob marks a job as running.
 func (d *DB) StartJob(id string) error {
 	_, err := d.sql.Exec(

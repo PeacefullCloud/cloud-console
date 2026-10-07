@@ -257,14 +257,16 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := instances.CreateRequest{
-		Name:        strings.ToLower(strings.TrimSpace(r.FormValue("name"))),
-		ImageID:     r.FormValue("image"),
-		Kind:        strings.TrimSpace(r.FormValue("kind")),
-		Domain:      strings.TrimSpace(r.FormValue("domain")),
-		Notes:       strings.TrimSpace(r.FormValue("notes")),
-		StoragePool: r.FormValue("storage_pool"),
-		OwnerID:     user.ID,
-		OwnerName:   user.Username,
+		Name:         strings.ToLower(strings.TrimSpace(r.FormValue("name"))),
+		ImageID:      r.FormValue("image"),
+		Kind:         strings.TrimSpace(r.FormValue("kind")),
+		RootPassword: r.FormValue("root_password"),
+		SSHKey:       strings.TrimSpace(r.FormValue("ssh_key")),
+		Domain:       strings.TrimSpace(r.FormValue("domain")),
+		Notes:        strings.TrimSpace(r.FormValue("notes")),
+		StoragePool:  r.FormValue("storage_pool"),
+		OwnerID:      user.ID,
+		OwnerName:    user.Username,
 	}
 	if req.Kind == "" {
 		req.Kind = instances.KindContainer
@@ -481,10 +483,17 @@ func (s *Server) handleInstanceDelete(w http.ResponseWriter, r *http.Request) {
 	err := s.Instances.Delete(r.Context(), name)
 	s.App.Activity.Record(username, "Delete instance", name, "", err)
 
-	if err == nil {
-		s.Monitoring.Forget(name)
+	if err != nil {
+		s.fail(w, r, s.InstanceURL(name), err)
+		return
 	}
-	s.finish(w, r, "/instances", err, "Deleted "+name+".")
+	s.Monitoring.Forget(name)
+
+	// Always land on /instances. redirectBack would return to the detail
+	// page (the Referer), which no longer exists, and its not-found flash
+	// would overwrite this success message.
+	s.setFlash(w, "ok", "Deleted "+name+".")
+	http.Redirect(w, r, "/instances", http.StatusSeeOther)
 }
 
 func (s *Server) handleInstanceRename(w http.ResponseWriter, r *http.Request) {
