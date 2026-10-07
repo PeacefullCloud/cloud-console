@@ -208,6 +208,7 @@ func (r *Renderer) funcMap() template.FuncMap {
 		"jobPill":         jobPill,
 		"greeting":        greeting,
 		"dict":            dict,
+		"safeURL":         func(s string) template.URL { return template.URL(s) },
 	}
 }
 
