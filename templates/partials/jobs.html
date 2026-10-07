@@ -1,6 +1,6 @@
 {{- /* Active job tracker. Context: a struct with .Jobs */ -}}
 {{define "job_list"}}
-<div id="job-tracker"
+<div id="job-tracker" data-jobs-stream="/jobs/stream"
      {{if .Jobs}}hx-get="/jobs/active" hx-trigger="every 2s" hx-swap="outerHTML" hx-target="#job-tracker"{{else}}hx-get="/jobs/active" hx-trigger="every 15s" hx-swap="outerHTML" hx-target="#job-tracker"{{end}}>
   {{range .Jobs}}
   <div class="job">

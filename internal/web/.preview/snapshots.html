@@ -1,18 +1,16 @@
-{{- /* Base layout: top bar + sidebar + main content.
-       Every page defines "content"; the rest is shared. */ -}}
-{{define "layout"}}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{block "title" .}}{{.Title}}{{end}} · Peaceful Cloud Console</title>
-<link rel="stylesheet" href="/static/style.css">
+<title>Snapshots · Peaceful Cloud Console</title>
+<link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
-<script src="/static/htmx.min.js" defer></script>
-<script src="/static/app.js" defer></script>
+<script src="htmx.min.js" defer></script>
+<script src="app.js" defer></script>
 </head>
-<body{{with .BodyClass}} class="{{.}}"{{end}}>
+<body>
 
 <header class="topbar">
   <button class="icon-btn" id="sidebar-toggle" type="button" aria-label="Toggle navigation" aria-expanded="true" aria-controls="sidebar">
@@ -30,7 +28,7 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
       <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
     </svg>
-    <input type="search" name="q" value="{{.Query}}" placeholder="Filter instances by name, image or domain" aria-label="Filter instances">
+    <input type="search" name="q" value="" placeholder="Filter instances by name, image or domain" aria-label="Filter instances">
   </form>
 
   <nav class="topnav">
@@ -43,10 +41,10 @@
       </svg>
     </a>
     <form method="post" action="/logout" class="row-tight">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="csrf_token" value="test-token">
       <button type="submit" class="row-tight" title="Sign out">
-        <span class="avatar">{{initials .User.Username}}</span>
-        <span class="nowrap">{{.User.Username}}</span>
+        <span class="avatar">AD</span>
+        <span class="nowrap">admin</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
       </button>
     </form>
@@ -56,32 +54,32 @@
 <div class="shell">
   <aside class="sidebar" id="sidebar">
     <div class="nav-group">
-      <a class="nav-item {{if eq .Nav "getting-started"}}active{{end}}" href="/">
+      <a class="nav-item " href="/">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
         Getting started
       </a>
-      <a class="nav-item {{if eq .Nav "instances"}}active{{end}}" href="/instances">
+      <a class="nav-item active" href="/instances">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
         Instances
-        {{if .InstanceCount}}<span class="nav-count">{{.InstanceCount}}</span>{{end}}
+        <span class="nav-count">2</span>
       </a>
-      <a class="nav-item {{if eq .Nav "networking"}}active{{end}}" href="/networking">
+      <a class="nav-item " href="/networking">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 8v4M12 12L6 17M12 12l6 5"/></svg>
         Networking
       </a>
-      <a class="nav-item {{if eq .Nav "storage"}}active{{end}}" href="/storage">
+      <a class="nav-item " href="/storage">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
         Storage
       </a>
-      <a class="nav-item {{if eq .Nav "domains"}}active{{end}}" href="/domains">
+      <a class="nav-item " href="/domains">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18-2.5-3-2.5-15 0-18z"/></svg>
         Domains &amp; DNS
       </a>
-      <a class="nav-item {{if eq .Nav "snapshots"}}active{{end}}" href="/snapshots">
+      <a class="nav-item " href="/snapshots">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v13"/><path d="M8 12l4 4 4-4"/><path d="M4 20h16"/></svg>
         Snapshots
       </a>
-      <a class="nav-item {{if eq .Nav "backups"}}active{{end}}" href="/backups">
+      <a class="nav-item " href="/backups">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 8v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/><path d="M15 3h6v6"/><path d="M21 3l-7 7"/></svg>
         Backups
       </a>
@@ -89,11 +87,11 @@
 
     <div class="nav-group">
       <div class="nav-title">Operations</div>
-      <a class="nav-item {{if eq .Nav "activity"}}active{{end}}" href="/activity">
+      <a class="nav-item " href="/activity">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
         Activity
       </a>
-      <a class="nav-item {{if eq .Nav "settings"}}active{{end}}" href="/settings">
+      <a class="nav-item " href="/settings">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M4 12h2M18 12h2M12 4v2M12 18v2"/></svg>
         Settings
       </a>
@@ -113,13 +111,102 @@
   </aside>
 
   <main class="main">
-    {{template "content" .}}
+    
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Snapshots</h1>
+      <p class="page-sub">3 snapshots across all instances. Snapshots are local rollback points — use Backups for off-host copies.</p>
+    </div>
+  </div>
+
+  
+
+  
+  <div class="card">
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Snapshot</th><th>Instance</th><th>Created</th><th>Note</th><th class="tight"></th></tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td><strong>snap-20261007-1200</strong></td>
+            <td><a href="/instances/wp-example?tab=snapshots">wp-example</a></td>
+            <td class="muted nowrap">7 Oct 2026</td>
+            <td class="muted">Before plugin update</td>
+            <td>
+              <div class="row-tight">
+                <form method="post" action="/instances/wp-example/snapshots/snap-20261007-1200/restore"
+                      data-confirm="Restore wp-example to snap-20261007-1200?">
+                  <input type="hidden" name="csrf_token" value="test-token">
+                  <button class="btn btn-sm" type="submit">Restore</button>
+                </form>
+                <form method="post" action="/instances/wp-example/snapshots/snap-20261007-1200/delete"
+                      data-confirm="Delete snapshot snap-20261007-1200?">
+                  <input type="hidden" name="csrf_token" value="test-token">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          
+          <tr>
+            <td><strong>snap-20261006-0900</strong></td>
+            <td><a href="/instances/wp-example?tab=snapshots">wp-example</a></td>
+            <td class="muted nowrap">6 Oct 2026</td>
+            <td class="muted">Clean install</td>
+            <td>
+              <div class="row-tight">
+                <form method="post" action="/instances/wp-example/snapshots/snap-20261006-0900/restore"
+                      data-confirm="Restore wp-example to snap-20261006-0900?">
+                  <input type="hidden" name="csrf_token" value="test-token">
+                  <button class="btn btn-sm" type="submit">Restore</button>
+                </form>
+                <form method="post" action="/instances/wp-example/snapshots/snap-20261006-0900/delete"
+                      data-confirm="Delete snapshot snap-20261006-0900?">
+                  <input type="hidden" name="csrf_token" value="test-token">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          
+          <tr>
+            <td><strong>snap-20261006-0830</strong></td>
+            <td><a href="/instances/api-demo?tab=snapshots">api-demo</a></td>
+            <td class="muted nowrap">6 Oct 2026</td>
+            <td class="muted">Before deploy</td>
+            <td>
+              <div class="row-tight">
+                <form method="post" action="/instances/api-demo/snapshots/snap-20261006-0830/restore"
+                      data-confirm="Restore api-demo to snap-20261006-0830?">
+                  <input type="hidden" name="csrf_token" value="test-token">
+                  <button class="btn btn-sm" type="submit">Restore</button>
+                </form>
+                <form method="post" action="/instances/api-demo/snapshots/snap-20261006-0830/delete"
+                      data-confirm="Delete snapshot snap-20261006-0830?">
+                  <input type="hidden" name="csrf_token" value="test-token">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+</div>
+
   </main>
 </div>
 
 <footer class="pagefoot">
-  <span>Peaceful Cloud Console {{.Version}}</span>
-  <span class="faint">{{.IncusSocket}}</span>
+  <span>Peaceful Cloud Console test</span>
+  <span class="faint">/var/lib/incus/unix.socket</span>
   <span class="spacer"></span>
   <a href="/activity">Activity</a>
   <a href="/settings">Settings</a>
@@ -128,4 +215,3 @@
 <div id="toasts"></div>
 </body>
 </html>
-{{end}}

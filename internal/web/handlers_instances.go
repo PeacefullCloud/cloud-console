@@ -295,7 +295,11 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 	s.App.Activity.Record(user.Username, "Create instance", req.Name,
 		"queued as job "+job.ID, nil)
 
-	s.succeed(w, r, "/instances", "Creating "+req.Name+" — this takes a moment.")
+	// Always land on /instances where the job tracker lives. Do not use
+	// redirectBack here: the Referer is /create, which would leave the user
+	// on the wizard with no progress feedback.
+	s.setFlash(w, "ok", "Creating "+req.Name+" — this takes a moment.")
+	http.Redirect(w, r, "/instances", http.StatusSeeOther)
 }
 
 // --- instance detail ------------------------------------------------------

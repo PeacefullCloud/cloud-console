@@ -120,6 +120,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /settings/password", s.handlePasswordChange)
 
 	m.HandleFunc("GET /jobs/active", s.handleActiveJobs)
+	m.HandleFunc("GET /jobs/stream", s.handleJobsStream)
 }
 
 // --- middleware -----------------------------------------------------------
@@ -170,9 +171,25 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		// Static assets must load on the login page itself, before any
+		// session exists. (Previously only exact paths were public, so
+		// /static/* redirected to /login and the sign-in page rendered
+		// unstyled.)
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// HTMX requests get a redirect instruction instead of a full page.
 		if r.Header.Get("HX-Request") == "true" {
 			w.Header().Set("HX-Redirect", "/login")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// EventSource (SSE) cannot follow a login redirect usefully; tell
+		// the client to stop retrying so the HTMX polling fallback takes over.
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -240,6 +257,14 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Flush forwards SSE flushes. Without it, withLogging's wrapper hides the
+// underlying Flusher and GET /jobs/stream fails with 500.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // --- context keys ---------------------------------------------------------

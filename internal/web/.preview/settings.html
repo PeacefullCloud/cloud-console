@@ -1,0 +1,327 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · Peaceful Cloud Console</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+<script src="htmx.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+
+<header class="topbar">
+  <button class="icon-btn" id="sidebar-toggle" type="button" aria-label="Toggle navigation" aria-expanded="true" aria-controls="sidebar">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M3 6h18M3 12h18M3 18h18"/>
+    </svg>
+  </button>
+
+  <a class="brand" href="/">
+    <span class="brand-mark">P</span>
+    <span>Peaceful<strong>Cloud</strong></span>
+  </a>
+
+  <form class="topsearch" role="search" action="/instances" method="get">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+      <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+    </svg>
+    <input type="search" name="q" value="" placeholder="Filter instances by name, image or domain" aria-label="Filter instances">
+  </form>
+
+  <nav class="topnav">
+    <a href="/">Home</a>
+    <a href="/instances">Instances</a>
+    <a href="/settings" title="Settings">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"/>
+      </svg>
+    </a>
+    <form method="post" action="/logout" class="row-tight">
+      <input type="hidden" name="csrf_token" value="test-token">
+      <button type="submit" class="row-tight" title="Sign out">
+        <span class="avatar">AD</span>
+        <span class="nowrap">admin</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </form>
+  </nav>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="nav-group">
+      <a class="nav-item " href="/">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+        Getting started
+      </a>
+      <a class="nav-item active" href="/instances">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
+        Instances
+        <span class="nav-count">2</span>
+      </a>
+      <a class="nav-item " href="/networking">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 8v4M12 12L6 17M12 12l6 5"/></svg>
+        Networking
+      </a>
+      <a class="nav-item " href="/storage">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+        Storage
+      </a>
+      <a class="nav-item " href="/domains">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 3 2.5 15 0 18-2.5-3-2.5-15 0-18z"/></svg>
+        Domains &amp; DNS
+      </a>
+      <a class="nav-item " href="/snapshots">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v13"/><path d="M8 12l4 4 4-4"/><path d="M4 20h16"/></svg>
+        Snapshots
+      </a>
+      <a class="nav-item " href="/backups">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 8v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/><path d="M15 3h6v6"/><path d="M21 3l-7 7"/></svg>
+        Backups
+      </a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-title">Operations</div>
+      <a class="nav-item " href="/activity">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        Activity
+      </a>
+      <a class="nav-item " href="/settings">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M4 12h2M18 12h2M12 4v2M12 18v2"/></svg>
+        Settings
+      </a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-title">Documentation</div>
+      <a class="nav-item" href="https://linuxcontainers.org/incus/docs/main/" target="_blank" rel="noreferrer noopener">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+        Incus documentation
+      </a>
+      <a class="nav-item" href="https://caddyserver.com/docs/" target="_blank" rel="noreferrer noopener">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+        Caddy documentation
+      </a>
+    </div>
+  </aside>
+
+  <main class="main">
+    
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Settings</h1>
+      <p class="page-sub">Host, console and security configuration.</p>
+    </div>
+  </div>
+
+  
+  
+
+  <div class="split">
+    <div class="split-main">
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Host</div>
+            <p class="card-sub">Read live from the Incus daemon.</p>
+          </div>
+        </div>
+        <div class="stat-grid" style="margin-bottom:14px">
+          <div class="stat">
+            <div class="stat-label">CPU cores</div>
+            <div class="stat-value">16</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Memory</div>
+            <div class="stat-value">64 GB</div>
+            <div class="stat-note">21 GB in use</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Instances</div>
+            <div class="stat-value">2</div>
+            <div class="stat-note">0 running</div>
+          </div>
+        </div>
+        <dl class="kv">
+          <dt>Incus server</dt><dd class="strong">incus-01 <span class="faint">v6.23</span></dd>
+          <dt>Driver</dt><dd>lxc | qemu</dd>
+          <dt>Socket</dt><dd class="mono">/var/lib/incus/unix.socket</dd>
+          <dt>Project</dt><dd>default</dd>
+        </dl>
+        
+        <div class="mt-16">
+          <div class="row mb-8">
+            <span class="small"><strong>default</strong> <span class="faint">zfs</span></span>
+            <span class="spacer small muted">214 GB / 1000 GB</span>
+          </div>
+          <div class="progress "><span style="width: 21.4%"></span></div>
+        </div>
+        
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Backup storage</div>
+            <p class="card-sub">S3-compatible object storage keeps backups independent of this server.</p>
+          </div>
+          <span class="pill pill-ok">configured</span>
+        </div>
+
+        
+        <dl class="kv">
+          <dt>Bucket</dt><dd class="mono">incus-backups</dd>
+          <dt>Endpoint</dt><dd class="mono">s3.eu-west-1.amazonaws.com</dd>
+          <dt>Region</dt><dd class="mono">eu-west-1</dd>
+          <dt>Prefix</dt><dd class="mono">peaceful-cloud</dd>
+          <dt>Access key</dt><dd class="mono">AKI••••••••23</dd>
+        </dl>
+        
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Web routing</div>
+            <p class="card-sub">How the console applies domain changes to the host Caddy.</p>
+          </div>
+          <span class="pill pill-ok">managed</span>
+        </div>
+        <dl class="kv">
+          <dt>Caddyfile path</dt><dd class="mono">/etc/caddy/Caddyfile</dd>
+          <dt>Admin API</dt><dd class="mono">—</dd>
+          <dt>Reload command</dt><dd class="mono">caddy reload --config /etc/caddy/Caddyfile</dd>
+        </dl>
+        <details class="disclosure">
+          <summary>Preview the generated Caddyfile</summary>
+          <div class="disclosure-body">
+            <pre class="mono" style="max-height:320px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">example.com {
+	reverse_proxy 10.10.0.21:80
+}
+
+api.example.com {
+	reverse_proxy 10.10.0.22:80
+}
+</pre>
+          </div>
+        </details>
+      </div>
+
+    </div>
+
+    <div class="split-side">
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow"><div class="card-title">Console users</div></div>
+          <span class="muted small">2</span>
+        </div>
+        
+        <div class="snap-row" style="padding:9px 0">
+          <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;font-weight:700;font-size:12px">AD</span>
+          <div class="grow">
+            <div class="snap-name" style="font-size:13px">admin <span class="faint">(you)</span></div>
+            <div class="snap-meta">admin · never signed in</div>
+          </div>
+        </div>
+        
+        <div class="snap-row" style="padding:9px 0">
+          <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;font-weight:700;font-size:12px">OP</span>
+          <div class="grow">
+            <div class="snap-name" style="font-size:13px">ops</div>
+            <div class="snap-meta">operator · never signed in</div>
+          </div>
+        </div>
+        
+
+        <details class="disclosure">
+          <summary>Add a user</summary>
+          <div class="disclosure-body">
+            <form method="post" action="/settings/users">
+              <input type="hidden" name="csrf_token" value="test-token">
+              <div class="field">
+                <label for="new_username">Username</label>
+                <input id="new_username" name="username" type="text" required>
+              </div>
+              <div class="field">
+                <label for="new_password">Password</label>
+                <input id="new_password" name="password" type="password" minlength="8" required>
+              </div>
+              <div class="field">
+                <label for="new_role">Role</label>
+                <select id="new_role" name="role">
+                  <option value="operator">Operator — manage instances</option>
+                  <option value="admin">Admin — full access</option>
+                  <option value="viewer">Viewer — read only</option>
+                </select>
+              </div>
+              <button class="btn btn-primary btn-block" type="submit">Create user</button>
+            </form>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Your password</div></div></div>
+        <form method="post" action="/settings/password">
+          <input type="hidden" name="csrf_token" value="test-token">
+          <div class="field">
+            <label for="current_password">Current password</label>
+            <input id="current_password" name="current_password" type="password" required>
+          </div>
+          <div class="field">
+            <label for="new_pw">New password</label>
+            <input id="new_pw" name="new_password" type="password" minlength="8" required>
+          </div>
+          <button class="btn btn-block" type="submit">Change password</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Session</div></div></div>
+        <dl class="kv">
+          <dt>Signed in as</dt><dd class="strong">admin</dd>
+          <dt>Role</dt><dd>admin</dd>
+          <dt>Active sessions</dt><dd>2</dd>
+          <dt>Session lifetime</dt><dd>168 hours</dd>
+        </dl>
+        <form method="post" action="/logout" class="mt-16">
+          <input type="hidden" name="csrf_token" value="test-token">
+          <button class="btn btn-block" type="submit">Sign out</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Monitoring</div></div></div>
+        <dl class="kv">
+          <dt>Sample interval</dt><dd>60 seconds</dd>
+          <dt>Retention</dt><dd>168 hours</dd>
+          <dt>Job workers</dt><dd>3</dd>
+        </dl>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+  </main>
+</div>
+
+<footer class="pagefoot">
+  <span>Peaceful Cloud Console test</span>
+  <span class="faint">/var/lib/incus/unix.socket</span>
+  <span class="spacer"></span>
+  <a href="/activity">Activity</a>
+  <a href="/settings">Settings</a>
+</footer>
+
+<div id="toasts"></div>
+</body>
+</html>

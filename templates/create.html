@@ -52,6 +52,7 @@
   {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 
   <form method="post" action="/instances" id="create-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
 
     <div class="card">
       <div class="card-head">
