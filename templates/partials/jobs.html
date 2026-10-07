@@ -1,0 +1,25 @@
+{{- /* Active job tracker. Context: a struct with .Jobs */ -}}
+{{define "job_list"}}
+<div id="job-tracker"
+     {{if .Jobs}}hx-get="/jobs/active" hx-trigger="every 2s" hx-swap="outerHTML" hx-target="#job-tracker"{{else}}hx-get="/jobs/active" hx-trigger="every 15s" hx-swap="outerHTML" hx-target="#job-tracker"{{end}}>
+  {{range .Jobs}}
+  <div class="job">
+    <div class="job-head">
+      <span class="grow"><strong>{{jobTitle .Kind}}</strong> <span class="muted mono small">{{.Target}}</span></span>
+      <span class="pill {{jobPill .Status}}">{{.Status}}</span>
+    </div>
+    {{if eq .Status "running"}}
+    <div class="progress"><span style="width: {{.Progress}}%"></span></div>
+    {{else if eq .Status "queued"}}
+    <div class="progress"><span style="width: 2%"></span></div>
+    {{else if eq .Status "failed"}}
+    <div class="progress danger"><span style="width: 100%"></span></div>
+    {{else}}
+    <div class="progress"><span style="width: 100%"></span></div>
+    {{end}}
+    {{if .Message}}<div class="job-msg">{{.Message}}</div>{{end}}
+    {{if .Error}}<div class="job-err">{{.Error}}</div>{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,118 @@
+{{define "tab_overview"}}
+{{$inst := .Inst}}
+<div class="split">
+  <div class="split-main">
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">Resource usage</div>
+          <p class="card-sub">Latest sample from the console's monitor. Open <a href="/instances/{{$inst.Name}}?tab=metrics">Metrics</a> for history.</p>
+        </div>
+      </div>
+
+      {{$cpu := $inst.CPUPercent}}
+      {{$mem := memPercent $inst.MemUsed $inst.MemoryBytes}}
+      {{$disk := diskPercent $inst.DiskUsed $inst.DiskBytes}}
+
+      <div class="meter-row">
+        <span class="meter-label">CPU</span>
+        <span class="progress {{usageClass $cpu}}"><span style="width: {{pct $cpu}}%"></span></span>
+        <span class="meter-value">{{pct $cpu}}%{{if $inst.CPU}} of {{$inst.CPU}} vCPU{{end}}</span>
+      </div>
+      <div class="meter-row">
+        <span class="meter-label">Memory</span>
+        <span class="progress {{usageClass $mem}}"><span style="width: {{pct $mem}}%"></span></span>
+        <span class="meter-value">{{gb $inst.MemUsed}}{{if $inst.MemoryBytes}} / {{gb $inst.MemoryBytes}}{{end}}</span>
+      </div>
+      <div class="meter-row">
+        <span class="meter-label">Disk</span>
+        <span class="progress {{usageClass $disk}}"><span style="width: {{pct $disk}}%"></span></span>
+        <span class="meter-value">{{gb $inst.DiskUsed}}{{if $inst.DiskBytes}} / {{gb $inst.DiskBytes}}{{end}}</span>
+      </div>
+      <div class="meter-row">
+        <span class="meter-label">Network</span>
+        <span></span>
+        <span class="meter-value">↓ {{bytes $inst.NetRx}} · ↑ {{bytes $inst.NetTx}}</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">Console log</div>
+          <p class="card-sub">Recent boot and service output from the instance console.</p>
+        </div>
+        <a class="btn btn-sm" href="/instances/{{$inst.Name}}?tab=overview">Refresh</a>
+      </div>
+
+      {{if .ConsoleLogErr}}
+      <p class="muted small" style="margin:0">{{.ConsoleLogErr}}</p>
+      {{else if .ConsoleLog}}
+      <pre class="mono" style="max-height:260px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0;white-space:pre-wrap">{{range .ConsoleLog}}{{.}}
+{{end}}</pre>
+      {{else}}
+      <p class="muted small" style="margin:0">No console output recorded yet. Start the instance to produce a log.</p>
+      {{end}}
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow"><div class="card-title">Access</div></div>
+      </div>
+      <div class="field">
+        <label>Console</label>
+        <div class="copy-field">
+          <input type="text" readonly value="incus exec {{$inst.Name}} -- bash">
+          <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- bash">Copy</button>
+        </div>
+      </div>
+      {{if $inst.IP}}
+      <div class="field">
+        <label>Container address</label>
+        <div class="copy-field">
+          <input type="text" readonly value="{{$inst.IP}}">
+          <button class="btn btn-sm" type="button" data-copy="{{$inst.IP}}">Copy</button>
+        </div>
+        <p class="hint">Containers live on the private Incus bridge. Public traffic arrives through the host Caddy.</p>
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="split-side">
+    <div class="card">
+      <div class="card-head">
+        <div class="grow"><div class="card-title">Details</div></div>
+      </div>
+      <dl class="kv">
+        <dt>Status</dt><dd><span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span></dd>
+        <dt>Image</dt><dd>{{$inst.ImageLabel}}</dd>
+        <dt>Private IPv4</dt><dd class="mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</dd>
+        <dt>Storage pool</dt><dd>{{if $inst.StoragePool}}{{$inst.StoragePool}}{{else}}—{{end}}</dd>
+        <dt>Domains</dt><dd>{{len $inst.Domains}}</dd>
+        {{if $inst.Notes}}<dt>Notes</dt><dd>{{$inst.Notes}}</dd>{{end}}
+      </dl>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow"><div class="card-title">Recent activity</div></div>
+        <a class="btn-link" href="/instances/{{$inst.Name}}?tab=history">All</a>
+      </div>
+      {{if .Activity}}
+        {{range .Activity}}
+        <div class="snap-row" style="padding:8px 0">
+          <div class="grow">
+            <div class="snap-name" style="font-size:13px">{{.Action}}</div>
+            <div class="snap-meta">{{.Username}} · {{ago .TS}}</div>
+          </div>
+          <span class="pill {{if eq .Status "ok"}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span>
+        </div>
+        {{end}}
+      {{else}}
+        <p class="muted small" style="margin:0">Nothing recorded yet.</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}

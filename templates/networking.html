@@ -1,0 +1,98 @@
+{{define "title"}}Networking{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Networking</h1>
+      <p class="page-sub">Caddy terminates public traffic on the host; instances stay on the private Incus bridge.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+  <div class="card">
+    <div class="card-head">
+      <div class="grow"><div class="card-title">Networks</div></div>
+    </div>
+    {{if .Networks}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Network</th><th>Type</th><th>Managed</th><th>Address</th><th class="num">Instances</th></tr></thead>
+        <tbody>
+          {{range .Networks}}
+          <tr>
+            <td><strong>{{.Name}}</strong>{{if .Description}}<div class="snap-meta">{{.Description}}</div>{{end}}</td>
+            <td class="muted">{{.Type}}</td>
+            <td class="muted">{{.Managed}}</td>
+            <td class="mono">{{if .Address}}{{.Address}}{{else}}—{{end}}</td>
+            <td class="num">{{.UsedBy}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p class="muted small" style="margin:0">No Incus networks found.</p>
+    {{end}}
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="grow">
+        <div class="card-title">Instance addresses</div>
+        <p class="card-sub">Private addresses the host Caddy proxies to.</p>
+      </div>
+    </div>
+    {{if .Instances}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Instance</th><th>Private address</th><th>Domains</th><th>Status</th><th class="tight"></th></tr></thead>
+        <tbody>
+          {{range .Instances}}
+          <tr>
+            <td><a href="/instances/{{.Name}}?tab=networking">{{.Name}}</a></td>
+            <td class="mono">{{if .IP}}{{.IP}}{{else}}<span class="faint">pending</span>{{end}}</td>
+            <td>
+              {{if .Domains}}
+                {{range .Domains}}<div class="mono small">{{.Domain}}</div>{{end}}
+              {{else}}<span class="faint">none</span>{{end}}
+            </td>
+            <td><span class="status {{statusClass .Status}}">{{.Status}}</span></td>
+            <td><a class="btn btn-sm" href="/instances/{{.Name}}?tab=domains">Add domain</a></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <p class="muted small" style="margin:0">No instances yet.</p>
+    {{end}}
+  </div>
+
+  <div class="split">
+    <div class="split-main">
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Create the bridge</div></div></div>
+        <p class="muted small">One bridge for all instances. Public traffic never reaches it directly.</p>
+        <div class="copy-field">
+          <input type="text" readonly value="incus network create incusbr0 ipv4.address=10.10.0.1/24 ipv4.nat=true">
+          <button class="btn btn-sm" type="button" data-copy="incus network create incusbr0 ipv4.address=10.10.0.1/24 ipv4.nat=true">Copy</button>
+        </div>
+      </div>
+    </div>
+    <div class="split-side">
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Caddy</div></div></div>
+        <dl class="kv">
+          <dt>Status</dt>
+          <dd>{{if .CaddyEnabled}}<span class="pill pill-ok">managed by the console</span>{{else}}<span class="pill pill-warn">not managed</span>{{end}}</dd>
+          <dt>Config path</dt>
+          <dd class="mono">{{if .CaddyPath}}{{.CaddyPath}}{{else}}—{{end}}</dd>
+          <dt>Admin API</dt>
+          <dd class="mono">{{if .CaddyAdmin}}{{.CaddyAdmin}}{{else}}—{{end}}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

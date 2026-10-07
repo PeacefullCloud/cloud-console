@@ -1,0 +1,94 @@
+{{define "title"}}Domains &amp; DNS{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Domains &amp; DNS</h1>
+      <p class="page-sub">
+        {{len .Domains}} domain{{if ne (len .Domains) 1}}s{{end}} routed through the host Caddy with automatic HTTPS.
+      </p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+
+  {{if not .CaddyEnabled}}
+  <div class="flash flash-warn">
+    The console is not managing Caddy. Set <span class="mono">CADDY_CONFIG_PATH</span> or
+    <span class="mono">CADDY_ADMIN_URL</span> so domains are applied automatically.
+    Domains added here are still recorded.
+  </div>
+  {{end}}
+
+  <div class="split">
+    <div class="split-main">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Domain mappings</div>
+            <p class="card-sub">Each domain is reverse proxied to its instance's private address.</p>
+          </div>
+        </div>
+
+        {{if .Domains}}
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Domain</th><th>Instance</th><th>Upstream</th><th>Status</th><th class="tight"></th></tr>
+            </thead>
+            <tbody>
+              {{range .Domains}}
+              <tr>
+                <td>
+                  <a href="https://{{.Domain}}" target="_blank" rel="noreferrer noopener">{{.Domain}}</a>
+                  <div class="snap-meta">{{date .CreatedAt}}</div>
+                </td>
+                <td><a href="/instances/{{.InstanceName}}?tab=domains">{{.InstanceName}}</a></td>
+                <td class="mono muted">{{if .Upstream}}{{.Upstream}}{{else}}—{{end}}</td>
+                <td>{{if .Reachable}}<span class="pill pill-ok">live</span>{{else}}<span class="pill pill-warn">no upstream</span>{{end}}</td>
+                <td>
+                  <form method="post" action="/domains/{{.ID}}/delete" data-confirm="Remove {{.Domain}}?">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                    <button class="btn btn-sm btn-danger" type="submit">Remove</button>
+                  </form>
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}
+        <div class="empty">
+          <h3>No domains configured</h3>
+          <p>Add a domain from an instance's Domains tab.</p>
+          <a class="btn" href="/instances">Browse instances</a>
+        </div>
+        {{end}}
+      </div>
+    </div>
+
+    <div class="split-side">
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">DNS setup</div></div></div>
+        <p class="muted small">For every domain, create an A record pointing at this server's public address:</p>
+        <dl class="kv">
+          <dt>A record</dt>
+          <dd class="mono">example.com → {{if .PublicIP}}{{.PublicIP}}{{else}}&lt;server public IP&gt;{{end}}</dd>
+          <dt>Optional</dt>
+          <dd class="mono">www.example.com → same address</dd>
+        </dl>
+        <p class="hint">Caddy requests a certificate as soon as DNS resolves and port 80/443 are reachable.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow"><div class="card-title">Generated Caddyfile</div></div>
+          <button class="btn btn-sm" type="button" data-copy-target="#caddy-preview">Copy</button>
+        </div>
+        <pre id="caddy-preview" class="mono" style="max-height:340px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">{{.CaddyPreview}}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

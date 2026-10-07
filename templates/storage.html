@@ -1,0 +1,65 @@
+{{define "title"}}Storage{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Storage</h1>
+      <p class="page-sub">{{len .Host.Pools}} storage pool{{if ne (len .Host.Pools) 1}}s{{end}} on {{.Host.ServerName}}.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+  {{if .Host.Pools}}
+    {{range .Host.Pools}}
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">{{.Name}}</div>
+          <p class="card-sub">Driver: {{.Driver}} · {{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</p>
+        </div>
+        <span class="pill pill-info">{{gb .Used}} / {{gb .Total}}</span>
+      </div>
+
+      <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
+      <p class="hint">{{pct (poolPercent .Used .Total)}}% used · {{bytes .Free}} free</p>
+
+      {{if .Instances}}
+      <div class="table-wrap mt-16">
+        <table class="table">
+          <thead><tr><th>Instance</th><th>Status</th><th class="num">Root disk</th><th class="num">Used</th><th class="tight"></th></tr></thead>
+          <tbody>
+            {{range .Instances}}
+            <tr>
+              <td><a href="/instances/{{.Name}}">{{.Name}}</a></td>
+              <td><span class="status {{statusClass .Status}}">{{.Status}}</span></td>
+              <td class="num">{{if .DiskBytes}}{{gb .DiskBytes}}{{else}}pool default{{end}}</td>
+              <td class="num muted">{{gb .DiskUsed}}</td>
+              <td><a class="btn btn-sm" href="/instances/{{.Name}}?tab=storage">Manage</a></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <p class="muted small mt-16" style="margin-bottom:0">No instances use this pool yet.</p>
+      {{end}}
+    </div>
+    {{end}}
+  {{else}}
+    <div class="empty">
+      <h3>No storage pools found</h3>
+      <p>Create a pool with <span class="mono">incus storage create</span> and reload this page.</p>
+    </div>
+  {{end}}
+
+  <div class="card mt-24">
+    <div class="card-head"><div class="grow"><div class="card-title">Create a pool</div></div></div>
+    <p class="muted small">The plan targets ZFS on a single physical server:</p>
+    <div class="copy-field">
+      <input type="text" readonly value="incus storage create default zfs size=1TiB">
+      <button class="btn btn-sm" type="button" data-copy="incus storage create default zfs size=1TiB">Copy</button>
+    </div>
+  </div>
+</div>
+{{end}}

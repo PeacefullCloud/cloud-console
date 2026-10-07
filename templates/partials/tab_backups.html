@@ -1,0 +1,95 @@
+{{define "tab_backups"}}
+{{$inst := .Inst}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Backups</div>
+      <p class="card-sub">
+        A backup is a portable archive. It is written to the console's disk
+        {{if .S3Enabled}}and can be exported to object storage ({{.S3Bucket}}){{end}}.
+      </p>
+    </div>
+  </div>
+
+  <form method="post" action="/instances/{{$inst.Name}}/backups" class="row-wrap">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="text" name="backup_name" value="{{.SuggestedBackup}}" placeholder="backup name" style="flex:1 1 220px">
+    {{if .S3Enabled}}
+    <label class="checkline nowrap"><input type="checkbox" name="export_s3" value="1"> Also upload to object storage</label>
+    {{end}}
+    <button class="btn btn-primary" type="submit">Create backup</button>
+  </form>
+  {{if not .S3Enabled}}
+  <p class="hint mt-8">Configure an S3-compatible target in <a href="/settings">Settings</a> to export backups off-host.</p>
+  {{end}}
+
+  {{if .Backups}}
+  <div class="table-wrap mt-16">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Backup</th>
+          <th>Created</th>
+          <th>Status</th>
+          <th>Storage</th>
+          <th class="num">Size</th>
+          <th class="tight"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Backups}}
+        <tr>
+          <td>
+            <div class="snap-name">{{.Name}}</div>
+            {{if .Error}}<div class="snap-meta" style="color:var(--red)">{{.Error}}</div>{{end}}
+          </td>
+          <td class="muted nowrap">{{date .CreatedAt}}{{if .CreatedBy}} <span class="faint">· {{.CreatedBy}}</span>{{end}}</td>
+          <td>
+            {{if eq .Status "complete"}}<span class="pill pill-ok">complete</span>
+            {{else if eq .Status "running"}}<span class="pill pill-info">running</span>
+            {{else if eq .Status "failed"}}<span class="pill pill-err">failed</span>
+            {{else}}<span class="pill">{{.Status}}</span>{{end}}
+          </td>
+          <td>
+            <div class="row-tight">
+              {{if .LocalExists}}<span class="pill pill-ok" title="{{.LocalPath}}">local</span>{{end}}
+              {{if .InS3}}<span class="pill pill-info" title="{{.S3Key}}">s3</span>{{end}}
+              {{if .InIncus}}<span class="pill pill-warn" title="Still inside Incus">incus</span>{{end}}
+            </div>
+          </td>
+          <td class="num">{{bytes .SizeBytes}}</td>
+          <td>
+            <div class="row-tight">
+              {{if .LocalExists}}
+              <form method="post" action="/instances/{{$inst.Name}}/backups/{{.Name}}/restore"
+                    data-confirm="Restore {{$inst.Name}} from {{.Name}}? The current instance is deleted and re-created from the archive.">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn btn-sm" type="submit">Restore</button>
+              </form>
+              {{end}}
+              {{if and $.S3Enabled (not .InS3)}}
+              <form method="post" action="/instances/{{$inst.Name}}/backups/{{.Name}}/export">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn btn-sm" type="submit">Export</button>
+              </form>
+              {{end}}
+              <form method="post" action="/instances/{{$inst.Name}}/backups/{{.Name}}/delete"
+                    data-confirm="Delete backup {{.Name}} and every copy of its archive?">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty mt-16">
+    <h3>No backups</h3>
+    <p>Create a backup to keep a portable copy of this instance.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,46 @@
+{{define "login_page"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Peaceful Cloud Console</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+</head>
+<body>
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="brand-mark">P</span>
+      <span class="name">Peaceful Cloud Console</span>
+    </div>
+
+    <h1 style="font-size:20px;margin-bottom:4px">Sign in</h1>
+    <p class="muted small" style="margin-bottom:20px">Manage Incus instances on this server.</p>
+
+    {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+    {{if .Notice}}<div class="flash flash-info">{{.Notice}}</div>{{end}}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" autofocus required value="{{.Username}}">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+    </form>
+
+    <p class="faint small" style="margin:18px 0 0">
+      Incus is reached over its local Unix socket. The Incus API is never exposed to the internet.
+    </p>
+  </div>
+</div>
+</body>
+</html>
+{{end}}

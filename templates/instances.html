@@ -1,0 +1,57 @@
+{{define "title"}}Instances{{end}}
+{{define "content"}}
+<div class="wrap">
+
+  <div class="page-head">
+    <div class="grow">
+      <h1>Instances</h1>
+      <p class="page-sub">
+        {{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}} · {{.Running}} running · {{.Stopped}} stopped
+        {{if .Query}}· filtered by “{{.Query}}”{{end}}
+      </p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-primary" href="/create">Create instance</a>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+
+  {{template "job_list" .}}
+
+  <div class="row-wrap mb-16" style="margin-top:18px">
+    <form method="get" action="/instances" class="row-tight">
+      <span class="small muted">Filter</span>
+      <input type="search" name="q" value="{{.Query}}" placeholder="Name, image or domain" style="width:240px">
+      <button class="btn btn-sm" type="submit">Apply</button>
+      {{if .Query}}<a class="btn-link" href="/instances">Clear</a>{{end}}
+    </form>
+    <span class="spacer"></span>
+    <span class="small muted nowrap">Sorted by storage pool, then name</span>
+  </div>
+
+  {{if .Instances}}
+    {{range .Groups}}
+    <section class="pool-group">
+      <div class="pool-head">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+        {{if .Name}}{{.Name}}{{else}}Unassigned{{end}}
+        {{if .Driver}}<span class="pool-chip">{{.Driver}}</span>{{end}}
+      </div>
+      <div class="pool-sub">{{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</div>
+      <div class="inst-grid">
+        {{range .Instances}}{{template "instance_card" (dict "Inst" . "CSRF" $.CSRF)}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  {{else}}
+    <div class="empty">
+      <h3>{{if .Query}}No instances match “{{.Query}}”{{else}}No instances yet{{end}}</h3>
+      <p>{{if .Query}}Try a different name, image or domain.{{else}}Create your first Incus instance to get started.{{end}}</p>
+      {{if .Query}}<a class="btn" href="/instances">Clear filter</a>{{else}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
+    </div>
+  {{end}}
+
+</div>
+{{end}}

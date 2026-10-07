@@ -1,0 +1,89 @@
+{{define "tab_networking"}}
+{{$inst := .Inst}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">IP addresses</div>
+      <p class="card-sub">Containers use private addresses on the Incus bridge. Only the host is publicly reachable.</p>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <div class="card" style="margin:0">
+      <div class="stat-label">Private IPv4</div>
+      <div class="stat-value mono" style="font-size:19px">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</div>
+      <p class="hint">Assigned by the Incus bridge. Used by the host Caddy as the upstream.</p>
+    </div>
+    {{range $i, $a := $inst.IPs}}
+    {{if ne $a $inst.IP}}
+    <div class="card" style="margin:0">
+      <div class="stat-label">Additional address</div>
+      <div class="stat-value mono" style="font-size:19px">{{$a}}</div>
+      <p class="hint">Also reachable on the instance.</p>
+    </div>
+    {{end}}
+    {{end}}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Network interfaces</div>
+    </div>
+  </div>
+  {{if .Networks}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Interface</th><th>Type</th><th>Network</th><th>MAC address</th><th>State</th></tr></thead>
+      <tbody>
+        {{range .Networks}}
+        <tr>
+          <td><strong>{{.Name}}</strong></td>
+          <td class="muted">{{.Type}}</td>
+          <td>{{if .Network}}{{.Network}}{{else}}<span class="faint">—</span>{{end}}</td>
+          <td class="mono">{{.MAC}}</td>
+          <td><span class="pill {{if eq .State "up"}}pill-ok{{else}}pill{{end}}">{{.State}}</span></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="muted small" style="margin:0">No network devices found.</p>
+  {{end}}
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Inbound routing</div>
+      <p class="card-sub">Public hostnames served for this instance by the host Caddy, with automatic HTTPS.</p>
+    </div>
+    <a class="btn btn-sm" href="/instances/{{$inst.Name}}?tab=domains">Manage domains</a>
+  </div>
+
+  {{if .Domains}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Domain</th><th>Upstream</th><th>Certificate</th><th>Status</th></tr></thead>
+      <tbody>
+        {{range .Domains}}
+        <tr>
+          <td><a href="https://{{.Domain}}" target="_blank" rel="noreferrer noopener">{{.Domain}}</a></td>
+          <td class="mono muted">{{if .Upstream}}{{.Upstream}}{{else}}—{{end}}</td>
+          <td class="muted">Caddy automatic</td>
+          <td>
+            {{if .Reachable}}<span class="pill pill-ok">reachable</span>
+            {{else}}<span class="pill pill-warn">instance stopped</span>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="muted small" style="margin:0">No domains point at this instance yet.</p>
+  {{end}}
+</div>
+{{end}}

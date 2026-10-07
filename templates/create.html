@@ -1,0 +1,212 @@
+{{define "title"}}Create an instance{{end}}
+
+{{/* Blueprint picker, rendered on first load and re-rendered when the
+     platform changes. Context: createData. */}}
+{{define "blueprint_grid"}}
+{{$selected := .Form.Image}}
+{{range .Images}}
+{{if or (eq $selected .ID) (and (eq $selected "") (eq .ID $.DefaultImage))}}
+<label class="pick">
+  <input type="radio" name="image" value="{{.ID}}" checked>
+  <span class="dot"></span>
+  <span class="os-icon {{osClass .Label}}">{{osInitial .Label}}</span>
+  <span class="pick-body">
+    <span class="pick-title">{{.Label}}</span>
+    <span class="pick-desc">{{.Description}}</span>
+    <span class="pick-note mono">{{.Alias}}</span>
+  </span>
+</label>
+{{else}}
+<label class="pick">
+  <input type="radio" name="image" value="{{.ID}}">
+  <span class="dot"></span>
+  <span class="os-icon {{osClass .Label}}">{{osInitial .Label}}</span>
+  <span class="pick-body">
+    <span class="pick-title">{{.Label}}</span>
+    <span class="pick-desc">{{.Description}}</span>
+    <span class="pick-note mono">{{.Alias}}</span>
+  </span>
+</label>
+{{end}}
+{{end}}
+{{if not .Images}}
+<div class="empty" style="grid-column:1/-1">
+  <h3>No images in this category</h3>
+  <p>Pick another platform or add images to Incus.</p>
+</div>
+{{end}}
+{{end}}
+
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Create an instance</h1>
+      <p class="page-sub">Pick an image, choose a plan and give the instance a name. It is created and started on the Incus host.</p>
+    </div>
+    <div class="page-actions">
+      <a class="btn" href="/instances">Cancel</a>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+  <form method="post" action="/instances" id="create-form">
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">1. Pick your instance image</div>
+          <p class="card-sub">The image determines the operating system and whether applications come pre-installed.</p>
+        </div>
+      </div>
+
+      <div class="label">Select a platform</div>
+      <div class="pick-grid mb-24">
+        {{range .Platforms}}
+        <label class="pick">
+          <input type="radio" name="platform" value="{{.ID}}"
+                 {{if eq .ID $.Form.Platform}}checked{{end}}
+                 hx-get="/create/blueprints"
+                 hx-include="[name='platform']"
+                 hx-target="#blueprints"
+                 hx-swap="innerHTML">
+          <span class="dot"></span>
+          <span class="os-icon os-custom">{{platformInitial .ID}}</span>
+          <span class="pick-body">
+            <span class="pick-title">{{.Label}}</span>
+            <span class="pick-desc">{{.Description}}</span>
+            <span class="pick-note">{{.Count}} image{{if ne .Count 1}}s{{end}}</span>
+          </span>
+        </label>
+        {{end}}
+      </div>
+
+      <div class="label">Select a blueprint</div>
+      <div class="pick-grid" id="blueprints">
+        {{template "blueprint_grid" .}}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">2. Choose your instance plan</div>
+          <p class="card-sub">Plans bundle compute, memory and SSD storage. Choose a preset or set your own limits.</p>
+        </div>
+      </div>
+
+      <div class="size-grid">
+        {{$size := .Form.Size}}
+        {{range .Sizes}}
+        <label class="size-card">
+          <input type="radio" name="size" value="{{.Value}}" {{if eq .Value $size}}checked{{end}}>
+          <div class="price">{{.CPU}} vCPU<small>{{gb .MemoryBytes}} RAM · {{.DiskGB}} GB SSD</small></div>
+          <div class="size-name">{{.Label}}</div>
+          <ul>
+            <li><b>{{.CPU}}</b> vCPU</li>
+            <li><b>{{gb .MemoryBytes}}</b> memory</li>
+            <li><b>{{.DiskGB}} GB</b> SSD</li>
+          </ul>
+        </label>
+        {{end}}
+
+        <label class="size-card">
+          <input type="radio" name="size" value="custom" {{if eq $size "custom"}}checked{{end}}>
+          <div class="price">Custom<small>Set your own resources</small></div>
+          <div class="size-name">Advanced</div>
+          <ul>
+            <li><b>1–64</b> vCPU</li>
+            <li><b>128 MB–1 TB</b> memory</li>
+            <li><b>2 GB–10 TB</b> SSD</li>
+          </ul>
+        </label>
+      </div>
+
+      <details class="disclosure" {{if eq $size "custom"}}open{{end}}>
+        <summary>Custom resources</summary>
+        <div class="disclosure-body">
+          <div class="field-row">
+            <div class="field">
+              <label for="cpu">vCPU</label>
+              <input id="cpu" name="cpu" type="number" min="1" max="64" value="{{.Form.CPU}}">
+            </div>
+            <div class="field">
+              <label for="memory_mb">Memory (MB)</label>
+              <input id="memory_mb" name="memory_mb" type="number" min="128" max="1048576" step="128" value="{{.Form.MemoryMB}}">
+            </div>
+            <div class="field">
+              <label for="disk_gb">Disk (GB)</label>
+              <input id="disk_gb" name="disk_gb" type="number" min="2" max="10240" value="{{.Form.DiskGB}}">
+            </div>
+          </div>
+          <p class="hint">These values are only used when the plan is set to <strong>Custom</strong>.</p>
+        </div>
+      </details>
+
+      {{if .Pools}}
+      <div class="field mt-16">
+        <label for="storage_pool">Storage pool</label>
+        <select id="storage_pool" name="storage_pool">
+          {{$pool := .Form.StoragePool}}
+          {{range .Pools}}
+          <option value="{{.Name}}" {{if eq .Name $pool}}selected{{end}}>{{.Name}} ({{.Driver}})</option>
+          {{end}}
+        </select>
+      </div>
+      {{end}}
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">3. Name your instance</div>
+          <p class="card-sub">Names must be lowercase and DNS-safe. Optionally attach a domain now.</p>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="name">Instance name</label>
+          <input id="name" name="name" type="text" required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
+                 placeholder="my-wordpress-site" value="{{.Form.Name}}">
+          <p class="hint">Lowercase letters, digits and hyphens. Cannot be changed later without a reboot.</p>
+        </div>
+        <div class="field">
+          <label for="domain">Domain (optional)</label>
+          <input id="domain" name="domain" type="text" placeholder="example.com" value="{{.Form.Domain}}">
+          <p class="hint">Point this domain's DNS at the host. HTTPS is issued automatically by Caddy.</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="notes">Notes (optional)</label>
+        <input id="notes" name="notes" type="text" placeholder="Customer site, staging, ..." value="{{.Form.Notes}}">
+      </div>
+    </div>
+
+    <div class="btn-row mt-24">
+      <button class="btn btn-primary" type="submit">
+        Create instance
+        <span class="htmx-indicator spinner"></span>
+      </button>
+      <a class="btn" href="/instances">Cancel</a>
+    </div>
+  </form>
+
+  <div class="card mt-24">
+    <div class="card-head">
+      <div class="grow">
+        <div class="card-title">What happens next</div>
+      </div>
+    </div>
+    <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.9">
+      <li>The instance is created from the selected image on the Incus host.</li>
+      <li>CPU, memory and root disk limits are applied.</li>
+      <li>The instance is started and gets a private address on the Incus bridge.</li>
+      <li>Caddy is re-rendered so the domain reaches the container with automatic HTTPS.</li>
+      <li>The instance appears as <strong>Running</strong> on the Instances page.</li>
+    </ol>
+  </div>
+</div>
+{{end}}

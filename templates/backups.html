@@ -1,0 +1,82 @@
+{{define "title"}}Backups{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Backups</h1>
+      <p class="page-sub">
+        {{len .Backups}} backup{{if ne (len .Backups) 1}}s{{end}} · {{bytes .TotalBytes}} archived
+        {{if .S3Enabled}}· exported to <span class="mono">{{.S3Bucket}}</span>{{else}}· stored on the console's disk only{{end}}
+      </p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+  {{if not .S3Enabled}}
+  <div class="flash flash-warn">
+    No S3-compatible target is configured. Backups stay on this server, which is not an independent copy.
+    Configure it in <a href="/settings">Settings</a>.
+  </div>
+  {{end}}
+
+  {{if .Backups}}
+  <div class="card">
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Backup</th><th>Instance</th><th>Created</th><th>Status</th><th>Storage</th><th class="num">Size</th><th class="tight"></th></tr>
+        </thead>
+        <tbody>
+          {{range .Backups}}
+          <tr>
+            <td>
+              <div class="snap-name">{{.Name}}</div>
+              {{if .Error}}<div class="snap-meta" style="color:var(--red)">{{.Error}}</div>{{end}}
+            </td>
+            <td><a href="/instances/{{.InstanceName}}?tab=backups">{{.InstanceName}}</a></td>
+            <td class="muted nowrap">{{date .CreatedAt}}</td>
+            <td>
+              {{if eq .Status "complete"}}<span class="pill pill-ok">complete</span>
+              {{else if eq .Status "running"}}<span class="pill pill-info">running</span>
+              {{else if eq .Status "failed"}}<span class="pill pill-err">failed</span>
+              {{else}}<span class="pill">{{.Status}}</span>{{end}}
+            </td>
+            <td>
+              <div class="row-tight">
+                {{if .LocalExists}}<span class="pill pill-ok">local</span>{{end}}
+                {{if .InS3}}<span class="pill pill-info">s3</span>{{end}}
+              </div>
+            </td>
+            <td class="num">{{bytes .SizeBytes}}</td>
+            <td>
+              <div class="row-tight">
+                {{if .LocalExists}}
+                <form method="post" action="/instances/{{.InstanceName}}/backups/{{.Name}}/restore"
+                      data-confirm="Restore {{.InstanceName}} from {{.Name}}? The instance is deleted and re-created.">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm" type="submit">Restore</button>
+                </form>
+                {{end}}
+                <form method="post" action="/instances/{{.InstanceName}}/backups/{{.Name}}/delete"
+                      data-confirm="Delete backup {{.Name}}?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    <h3>No backups yet</h3>
+    <p>Create one from an instance's Backups tab.</p>
+    <a class="btn" href="/instances">Browse instances</a>
+  </div>
+  {{end}}
+</div>
+{{end}}

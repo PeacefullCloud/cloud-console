@@ -1,0 +1,69 @@
+{{define "tab_storage"}}
+{{$inst := .Inst}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">System disk</div>
+      <p class="card-sub">The instance's root filesystem lives on an Incus storage pool, not on a host path.</p>
+    </div>
+  </div>
+
+  <div class="snap-row">
+    <span class="os-icon os-custom" style="border-radius:8px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+    </span>
+    <div class="grow">
+      <div class="snap-name">root</div>
+      <div class="snap-meta">
+        {{if $inst.DiskBytes}}{{gb $inst.DiskBytes}} block storage{{else}}Pool default size{{end}}
+        · pool <strong>{{if $inst.StoragePool}}{{$inst.StoragePool}}{{else}}default{{end}}</strong>
+        · mounted at <span class="mono">/</span>
+      </div>
+    </div>
+    <div class="meter-value nowrap">{{gb $inst.DiskUsed}} used</div>
+  </div>
+
+  {{if $inst.DiskBytes}}
+  <div class="mt-16">
+    <div class="progress {{usageClass (diskPercent $inst.DiskUsed $inst.DiskBytes)}}">
+      <span style="width: {{pct (diskPercent $inst.DiskUsed $inst.DiskBytes)}}%"></span>
+    </div>
+    <p class="hint">{{gb $inst.DiskUsed}} of {{gb $inst.DiskBytes}} used ({{pct (diskPercent $inst.DiskUsed $inst.DiskBytes)}}%).</p>
+  </div>
+  {{end}}
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Attached disks</div>
+      <p class="card-sub">Extra volumes attached to this instance beyond the root disk.</p>
+    </div>
+  </div>
+
+  {{if .Disks}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Device</th><th>Type</th><th>Pool</th><th>Source</th><th>Path</th></tr></thead>
+      <tbody>
+        {{range .Disks}}
+        <tr>
+          <td><strong>{{.Name}}</strong></td>
+          <td class="muted">{{.Type}}</td>
+          <td class="muted">{{.Pool}}</td>
+          <td class="mono">{{.Source}}</td>
+          <td class="mono">{{.Path}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="muted small" style="margin:0">No additional disks are attached to this instance.</p>
+  {{end}}
+
+  <p class="hint mt-16">
+    Grow the root disk from the <a href="/instances/{{$inst.Name}}?tab=settings">Settings</a> tab. Disks cannot be shrunk.
+  </p>
+</div>
+{{end}}

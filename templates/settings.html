@@ -1,0 +1,194 @@
+{{define "title"}}Settings{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Settings</h1>
+      <p class="page-sub">Host, console and security configuration.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+
+  <div class="split">
+    <div class="split-main">
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Host</div>
+            <p class="card-sub">Read live from the Incus daemon.</p>
+          </div>
+        </div>
+        <div class="stat-grid" style="margin-bottom:14px">
+          <div class="stat">
+            <div class="stat-label">CPU cores</div>
+            <div class="stat-value">{{.Host.CPUTotal}}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Memory</div>
+            <div class="stat-value">{{gb .Host.MemoryTotal}}</div>
+            <div class="stat-note">{{gb .Host.MemoryUsed}} in use</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Instances</div>
+            <div class="stat-value">{{.InstanceCount}}</div>
+            <div class="stat-note">{{.RunningCount}} running</div>
+          </div>
+        </div>
+        <dl class="kv">
+          <dt>Incus server</dt><dd class="strong">{{.Host.ServerName}} {{if .Host.Version}}<span class="faint">v{{.Host.Version}}</span>{{end}}</dd>
+          <dt>Driver</dt><dd>{{.Host.Driver}}</dd>
+          <dt>Socket</dt><dd class="mono">{{.IncusSocket}}</dd>
+          <dt>Project</dt><dd>{{if .IncusProject}}{{.IncusProject}}{{else}}default{{end}}</dd>
+        </dl>
+        {{range .Host.Pools}}
+        <div class="mt-16">
+          <div class="row mb-8">
+            <span class="small"><strong>{{.Name}}</strong> <span class="faint">{{.Driver}}</span></span>
+            <span class="spacer small muted">{{gb .Used}} / {{gb .Total}}</span>
+          </div>
+          <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
+        </div>
+        {{end}}
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Backup storage</div>
+            <p class="card-sub">S3-compatible object storage keeps backups independent of this server.</p>
+          </div>
+          {{if .S3Configured}}<span class="pill pill-ok">configured</span>{{else}}<span class="pill pill-warn">not configured</span>{{end}}
+        </div>
+
+        {{if .S3Configured}}
+        <dl class="kv">
+          <dt>Bucket</dt><dd class="mono">{{.S3Bucket}}</dd>
+          <dt>Endpoint</dt><dd class="mono">{{.S3Endpoint}}</dd>
+          <dt>Region</dt><dd class="mono">{{.S3Region}}</dd>
+          <dt>Prefix</dt><dd class="mono">{{.S3Prefix}}</dd>
+          <dt>Access key</dt><dd class="mono">{{.S3AccessKeyMasked}}</dd>
+        </dl>
+        {{else}}
+        <p class="muted small">Set these environment variables and restart the console:</p>
+        <pre class="mono" style="background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">S3_ENDPOINT=s3.example.com
+S3_BUCKET=incus-backups
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_REGION=us-east-1
+S3_USE_SSL=true</pre>
+        {{end}}
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Web routing</div>
+            <p class="card-sub">How the console applies domain changes to the host Caddy.</p>
+          </div>
+          {{if .CaddyEnabled}}<span class="pill pill-ok">managed</span>{{else}}<span class="pill pill-warn">disabled</span>{{end}}
+        </div>
+        <dl class="kv">
+          <dt>Caddyfile path</dt><dd class="mono">{{if .CaddyPath}}{{.CaddyPath}}{{else}}—{{end}}</dd>
+          <dt>Admin API</dt><dd class="mono">{{if .CaddyAdmin}}{{.CaddyAdmin}}{{else}}—{{end}}</dd>
+          <dt>Reload command</dt><dd class="mono">{{if .CaddyReloadCmd}}{{.CaddyReloadCmd}}{{else}}caddy reload --config &lt;path&gt;{{end}}</dd>
+        </dl>
+        <details class="disclosure">
+          <summary>Preview the generated Caddyfile</summary>
+          <div class="disclosure-body">
+            <pre class="mono" style="max-height:320px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">{{.CaddyPreview}}</pre>
+          </div>
+        </details>
+      </div>
+
+    </div>
+
+    <div class="split-side">
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow"><div class="card-title">Console users</div></div>
+          <span class="muted small">{{len .Users}}</span>
+        </div>
+        {{range .Users}}
+        <div class="snap-row" style="padding:9px 0">
+          <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;font-weight:700;font-size:12px">{{initials .Username}}</span>
+          <div class="grow">
+            <div class="snap-name" style="font-size:13px">{{.Username}}{{if eq .Username $.User.Username}} <span class="faint">(you)</span>{{end}}</div>
+            <div class="snap-meta">{{.Role}}{{if .LastLoginAt}} · last seen {{ago .LastLoginAt}}{{else}} · never signed in{{end}}</div>
+          </div>
+        </div>
+        {{end}}
+
+        <details class="disclosure">
+          <summary>Add a user</summary>
+          <div class="disclosure-body">
+            <form method="post" action="/settings/users">
+              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+              <div class="field">
+                <label for="new_username">Username</label>
+                <input id="new_username" name="username" type="text" required>
+              </div>
+              <div class="field">
+                <label for="new_password">Password</label>
+                <input id="new_password" name="password" type="password" minlength="8" required>
+              </div>
+              <div class="field">
+                <label for="new_role">Role</label>
+                <select id="new_role" name="role">
+                  <option value="operator">Operator — manage instances</option>
+                  <option value="admin">Admin — full access</option>
+                  <option value="viewer">Viewer — read only</option>
+                </select>
+              </div>
+              <button class="btn btn-primary btn-block" type="submit">Create user</button>
+            </form>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Your password</div></div></div>
+        <form method="post" action="/settings/password">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="current_password">Current password</label>
+            <input id="current_password" name="current_password" type="password" required>
+          </div>
+          <div class="field">
+            <label for="new_pw">New password</label>
+            <input id="new_pw" name="new_password" type="password" minlength="8" required>
+          </div>
+          <button class="btn btn-block" type="submit">Change password</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Session</div></div></div>
+        <dl class="kv">
+          <dt>Signed in as</dt><dd class="strong">{{.User.Username}}</dd>
+          <dt>Role</dt><dd>{{.User.Role}}</dd>
+          <dt>Active sessions</dt><dd>{{.SessionCount}}</dd>
+          <dt>Session lifetime</dt><dd>{{.SessionTTL}} hours</dd>
+        </dl>
+        <form method="post" action="/logout" class="mt-16">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <button class="btn btn-block" type="submit">Sign out</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Monitoring</div></div></div>
+        <dl class="kv">
+          <dt>Sample interval</dt><dd>{{.MetricsInterval}} seconds</dd>
+          <dt>Retention</dt><dd>{{.MetricsRetention}} hours</dd>
+          <dt>Job workers</dt><dd>{{.JobWorkers}}</dd>
+        </dl>
+      </div>
+
+    </div>
+  </div>
+</div>
+{{end}}

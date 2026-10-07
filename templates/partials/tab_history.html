@@ -1,0 +1,34 @@
+{{define "tab_history"}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Instance history</div>
+      <p class="card-sub">Every action the console performed on this instance.</p>
+    </div>
+  </div>
+
+  {{if .Activity}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Action</th><th>Detail</th><th>User</th><th>Result</th><th class="num">When</th></tr></thead>
+      <tbody>
+        {{range .Activity}}
+        <tr>
+          <td><strong>{{.Action}}</strong></td>
+          <td class="muted">{{if .Detail}}{{.Detail}}{{else}}—{{end}}</td>
+          <td class="muted">{{.Username}}</td>
+          <td><span class="pill {{if eq .Status "ok"}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span></td>
+          <td class="num muted nowrap">{{datetime .TS}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty">
+    <h3>Nothing recorded yet</h3>
+    <p>Actions taken from the console appear here.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

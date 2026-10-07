@@ -1,0 +1,55 @@
+{{define "title"}}Snapshots{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Snapshots</h1>
+      <p class="page-sub">{{len .Snapshots}} snapshot{{if ne (len .Snapshots) 1}}s{{end}} across all instances. Snapshots are local rollback points — use Backups for off-host copies.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+  {{if .Snapshots}}
+  <div class="card">
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Snapshot</th><th>Instance</th><th>Created</th><th>Note</th><th class="tight"></th></tr>
+        </thead>
+        <tbody>
+          {{range .Snapshots}}
+          <tr>
+            <td><strong>{{.Name}}</strong></td>
+            <td><a href="/instances/{{.InstanceName}}?tab=snapshots">{{.InstanceName}}</a></td>
+            <td class="muted nowrap">{{date .CreatedAt}}</td>
+            <td class="muted">{{if .Note}}{{.Note}}{{else}}—{{end}}</td>
+            <td>
+              <div class="row-tight">
+                <form method="post" action="/instances/{{.InstanceName}}/snapshots/{{.Name}}/restore"
+                      data-confirm="Restore {{.InstanceName}} to {{.Name}}?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm" type="submit">Restore</button>
+                </form>
+                <form method="post" action="/instances/{{.InstanceName}}/snapshots/{{.Name}}/delete"
+                      data-confirm="Delete snapshot {{.Name}}?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">
+    <h3>No snapshots yet</h3>
+    <p>Open an instance and take a snapshot before making changes.</p>
+    <a class="btn" href="/instances">Browse instances</a>
+  </div>
+  {{end}}
+</div>
+{{end}}

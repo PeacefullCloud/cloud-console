@@ -1,0 +1,61 @@
+{{- /* One instance card.
+       Context: a dict with "Inst" (instances.Instance) and "CSRF" (string),
+       built with the dict helper because template invocation resets $. */ -}}
+{{define "instance_card"}}
+{{$inst := .Inst}}
+<article class="inst-card">
+  <div class="inst-top">
+    <span class="os-icon {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
+    <div class="inst-body">
+      <a class="inst-name" href="/instances/{{$inst.Name}}">{{$inst.Name}}</a>
+      <div class="inst-spec">{{$inst.CPULabel}} · {{gb $inst.MemoryBytes}} RAM · {{gb $inst.DiskBytes}} SSD</div>
+      <div class="inst-type">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
+        {{if $inst.Tracked}}{{$inst.ImageLabel}}{{else}}{{title $inst.Kind}}{{end}}
+        {{if $inst.Owner}}<span class="faint">· {{$inst.Owner}}</span>{{end}}
+      </div>
+    </div>
+    <div class="inst-actions">
+      <button class="icon-btn" type="button" title="Copy instance name" data-copy="{{$inst.Name}}">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      </button>
+      <details class="menu">
+        <summary class="icon-btn" title="More actions">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+        </summary>
+        <div class="menu-pop">
+          <a href="/instances/{{$inst.Name}}">Open instance</a>
+          {{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">Open website</a>{{end}}
+          <form method="post" action="/instances/{{$inst.Name}}/state">
+            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+            <input type="hidden" name="action" value="restart">
+            <button type="submit">Reboot</button>
+          </form>
+          {{if $inst.Running}}
+          <form method="post" action="/instances/{{$inst.Name}}/state">
+            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+            <input type="hidden" name="action" value="stop">
+            <button type="submit">Stop</button>
+          </form>
+          {{else}}
+          <form method="post" action="/instances/{{$inst.Name}}/state">
+            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+            <input type="hidden" name="action" value="start">
+            <button type="submit">Start</button>
+          </form>
+          {{end}}
+          <a href="/instances/{{$inst.Name}}?tab=snapshots">Manage snapshots</a>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div class="inst-foot">
+    <span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span>
+    <span class="spacer"></span>
+    <span class="inst-addr">
+      {{if $inst.IP}}{{$inst.IP}}{{else}}<span class="faint">no address</span>{{end}}{{if $inst.PrimaryHost}}<br><span class="inst-domain">{{$inst.PrimaryHost}}</span>{{end}}
+    </span>
+  </div>
+</article>
+{{end}}

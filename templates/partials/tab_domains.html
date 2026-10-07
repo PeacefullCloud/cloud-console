@@ -1,0 +1,59 @@
+{{define "tab_domains"}}
+{{$inst := .Inst}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Custom domains</div>
+      <p class="card-sub">
+        Point the domain's DNS A record at this server.
+        {{if .CaddyEnabled}}Caddy provisions and renews HTTPS certificates automatically.{{else}}Caddy management is disabled — see Settings.{{end}}
+      </p>
+    </div>
+  </div>
+
+  <form method="post" action="/instances/{{$inst.Name}}/domains" class="row-wrap">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="text" name="domain" placeholder="example.com" style="flex:1 1 240px" required>
+    <input type="number" name="port" value="80" min="1" max="65535" style="width:110px" title="Container port">
+    <button class="btn btn-primary" type="submit">Add domain</button>
+  </form>
+
+  {{if .Domains}}
+  <div class="table-wrap mt-16">
+    <table class="table">
+      <thead>
+        <tr><th>Domain</th><th>Upstream</th><th>HTTPS</th><th>Status</th><th class="tight"></th></tr>
+      </thead>
+      <tbody>
+        {{range .Domains}}
+        <tr>
+          <td>
+            <a href="https://{{.Domain}}" target="_blank" rel="noreferrer noopener">{{.Domain}}</a>
+            {{if eq .Domain $inst.PrimaryHost}}<span class="pill pill-info" style="margin-left:6px">primary</span>{{end}}
+          </td>
+          <td class="mono muted">{{if .Upstream}}{{.Upstream}}{{else}}—{{end}}</td>
+          <td class="muted">Automatic (Let's Encrypt)</td>
+          <td>
+            {{if .Reachable}}<span class="pill pill-ok">live</span>
+            {{else}}<span class="pill pill-warn">no upstream</span>{{end}}
+          </td>
+          <td>
+            <form method="post" action="/instances/{{$inst.Name}}/domains/{{.ID}}/delete"
+                  data-confirm="Remove {{.Domain}} from {{$inst.Name}}?">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <button class="btn btn-sm btn-danger" type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty mt-16">
+    <h3>No domains yet</h3>
+    <p>Add a domain to serve this instance on the public internet.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,71 @@
+{{define "tab_snapshots"}}
+{{$inst := .Inst}}
+<div class="split">
+  <div class="split-main">
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">Manual snapshots</div>
+          <p class="card-sub">A snapshot is a fast local rollback point. It is not a backup — use Backups to export data off-host.</p>
+        </div>
+      </div>
+
+      <form method="post" action="/instances/{{$inst.Name}}/snapshots" class="row-wrap">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="text" name="snapshot_name" value="{{.SuggestedSnapshot}}" placeholder="snapshot name" style="flex:1 1 200px">
+        <input type="text" name="note" placeholder="note (optional)" style="flex:1 1 220px">
+        <button class="btn btn-primary" type="submit">Create snapshot</button>
+      </form>
+
+      {{if .Snapshots}}
+      <div class="snap-list mt-16">
+        {{range .Snapshots}}
+        <div class="snap-row">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue-600)" stroke-width="2" stroke-linecap="round" style="flex:none"><path d="M12 3v13"/><path d="M8 12l4 4 4-4"/><path d="M4 20h16"/></svg>
+          <div class="grow">
+            <div class="snap-name">{{.Name}}</div>
+            <div class="snap-meta">
+              {{date .CreatedAt}}
+              {{if .Note}} · {{.Note}}{{end}}
+              {{if .CreatedBy}} · by {{.CreatedBy}}{{end}}
+              {{if .Stateful}} · stateful{{end}}
+            </div>
+          </div>
+          <div class="row-tight">
+            <form method="post" action="/instances/{{$inst.Name}}/snapshots/{{.Name}}/restore"
+                  data-confirm="Restore {{$inst.Name}} to {{.Name}}? Current data is replaced.">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <button class="btn btn-sm" type="submit">Restore</button>
+            </form>
+            <form method="post" action="/instances/{{$inst.Name}}/snapshots/{{.Name}}/delete"
+                  data-confirm="Delete snapshot {{.Name}}?">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+            </form>
+          </div>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="empty mt-16">
+        <h3>No snapshots</h3>
+        <p>Take a snapshot before an update so you can roll back in seconds.</p>
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="split-side">
+    <div class="card">
+      <div class="card-head"><div class="grow"><div class="card-title">Scheduling</div></div></div>
+      <p class="muted small">
+        Automatic snapshots are created by an Incus snapshot schedule, not by the console. Create one on the host:
+      </p>
+      <div class="copy-field">
+        <input type="text" readonly value="incus snapshot schedule create {{$inst.Name}} daily --expiry 7d">
+        <button class="btn btn-sm" type="button" data-copy="incus snapshot schedule create {{$inst.Name}} daily --expiry 7d">Copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}

@@ -1,0 +1,100 @@
+{{define "tab_settings"}}
+{{$inst := .Inst}}
+<div class="split">
+  <div class="split-main">
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">Resource limits</div>
+          <p class="card-sub">Applied directly to the Incus instance. Disks can grow but never shrink.</p>
+        </div>
+      </div>
+
+      <form method="post" action="/instances/{{$inst.Name}}/limits">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <div class="field-row">
+          <div class="field">
+            <label for="cpu">vCPU</label>
+            <input id="cpu" name="cpu" type="number" min="0" max="64" value="{{$inst.CPU}}">
+            <p class="hint">0 means unlimited (host default).</p>
+          </div>
+          <div class="field">
+            <label for="memory_mb">Memory (MB)</label>
+            <input id="memory_mb" name="memory_mb" type="number" min="0" max="1048576" step="128" value="{{mb $inst.MemoryBytes}}">
+            <p class="hint">0 means unlimited.</p>
+          </div>
+          <div class="field">
+            <label for="disk_gb">Root disk (GB)</label>
+            <input id="disk_gb" name="disk_gb" type="number" min="0" max="10240" value="{{gbNum $inst.DiskBytes}}">
+            <p class="hint">Increase only.</p>
+          </div>
+        </div>
+        <button class="btn btn-primary" type="submit">Apply changes</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">Rename instance</div>
+          <p class="card-sub">Domains and console metadata follow the new name.</p>
+        </div>
+      </div>
+      <form method="post" action="/instances/{{$inst.Name}}/rename" class="row-wrap">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="text" name="name" value="{{$inst.Name}}" required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" style="flex:1 1 240px">
+        <button class="btn" type="submit">Rename</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="grow">
+          <div class="card-title">Rebuild from image</div>
+          <p class="card-sub">Replaces the root filesystem with a fresh image, keeping the name, limits and domains. All data inside is lost.</p>
+        </div>
+      </div>
+      <form method="post" action="/instances/{{$inst.Name}}/rebuild" class="row-wrap"
+            data-confirm="Rebuild {{$inst.Name}}? Everything inside the instance is destroyed.">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <select name="image" style="flex:1 1 240px">
+          {{range .Images}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
+        </select>
+        <button class="btn" type="submit">Rebuild</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="split-side">
+    <div class="card">
+      <div class="card-head"><div class="grow"><div class="card-title">Notes</div></div></div>
+      <form method="post" action="/instances/{{$inst.Name}}/notes">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <textarea name="notes" rows="4" placeholder="What runs here?">{{$inst.Notes}}</textarea>
+        <button class="btn btn-sm mt-8" type="submit">Save notes</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div class="grow"><div class="card-title">Identity</div></div></div>
+      <dl class="kv">
+        <dt>Name</dt><dd class="mono">{{$inst.Name}}</dd>
+        <dt>Type</dt><dd>{{title $inst.Kind}}</dd>
+        <dt>Image</dt><dd class="mono">{{if $inst.Image}}{{$inst.Image}}{{else}}unknown{{end}}</dd>
+        <dt>Created</dt><dd>{{datetime $inst.CreatedAt}}</dd>
+        <dt>Tracked by console</dt><dd>{{if $inst.Tracked}}Yes{{else}}No — created outside the console{{end}}</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div class="grow"><div class="card-title">Danger zone</div></div></div>
+      <p class="muted small">Deleting removes the instance, its snapshots and its local backups. This cannot be undone.</p>
+      <form method="post" action="/instances/{{$inst.Name}}/delete"
+            data-confirm="Delete {{$inst.Name}} permanently?">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button class="btn btn-danger btn-block" type="submit">Delete instance</button>
+      </form>
+    </div>
+  </div>
+</div>
+{{end}}

@@ -1,0 +1,154 @@
+{{define "title"}}Getting started{{end}}
+{{define "content"}}
+<div class="wrap">
+
+  <div class="page-head">
+    <div class="grow">
+      <h1>{{greeting}}</h1>
+      <p class="page-sub">
+        {{.Totals.Instances}} instance{{if ne .Totals.Instances 1}}s{{end}} on this server
+        · {{.Totals.Running}} running
+        · {{.Totals.Domains}} domain{{if ne .Totals.Domains 1}}s{{end}}
+      </p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-outline" href="/instances">View instances</a>
+      <a class="btn btn-primary" href="/create">Create instance</a>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+
+  {{if .Jobs}}
+  <h2 class="mb-8" style="font-size:16px">In progress</h2>
+  {{template "job_list" .}}
+  <div class="mb-24"></div>
+  {{end}}
+
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="stat-label">Instances</div>
+      <div class="stat-value">{{.Totals.Instances}}</div>
+      <div class="stat-note">{{.Totals.Running}} running · {{.Totals.Stopped}} stopped</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">vCPUs allocated</div>
+      <div class="stat-value">{{.Totals.VCPUs}}</div>
+      <div class="stat-note">of {{.Host.CPUTotal}} on the host</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Memory allocated</div>
+      <div class="stat-value">{{gb .Totals.MemoryBytes}}</div>
+      <div class="stat-note">of {{gb .Host.MemoryTotal}} installed</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Disk allocated</div>
+      <div class="stat-value">{{gb .Totals.DiskBytes}}</div>
+      <div class="stat-note">across {{len .Host.Pools}} storage pool{{if ne (len .Host.Pools) 1}}s{{end}}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Snapshots</div>
+      <div class="stat-value">{{.Totals.Snapshots}}</div>
+      <div class="stat-note">local rollback points</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Backups</div>
+      <div class="stat-value">{{.Totals.Backups}}</div>
+      <div class="stat-note">{{if .S3Enabled}}exported to object storage{{else}}stored locally{{end}}</div>
+    </div>
+  </div>
+
+  <div class="split">
+    <div class="split-main">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Instances</div>
+            <p class="card-sub">Everything Incus is running on this host.</p>
+          </div>
+          <a class="btn-link" href="/instances">View all</a>
+        </div>
+
+        {{if .Instances}}
+          {{range .Instances}}
+          <div class="snap-row">
+            <span class="os-icon {{osClass .ImageLabel}}">{{osInitial .ImageLabel}}</span>
+            <div class="grow">
+              <a class="snap-name" href="/instances/{{.Name}}">{{.Name}}</a>
+              <div class="snap-meta">
+                {{if .Tracked}}{{.ImageLabel}}{{else}}{{title .Kind}}{{end}} · {{.CPULabel}} · {{gb .MemoryBytes}} RAM · {{gb .DiskBytes}} disk
+                {{if .PrimaryHost}} · <span class="mono">{{.PrimaryHost}}</span>{{end}}
+              </div>
+            </div>
+            <span class="status {{statusClass .Status}}">{{.Status}}</span>
+            <span class="inst-addr" style="min-width:110px">{{if .IP}}{{.IP}}{{else}}<span class="faint">—</span>{{end}}</span>
+          </div>
+          {{end}}
+        {{else}}
+          <div class="empty">
+            <h3>No instances yet</h3>
+            <p>Create your first Incus instance to get started.</p>
+            <a class="btn btn-primary" href="/create">Create instance</a>
+          </div>
+        {{end}}
+      </div>
+    </div>
+
+    <div class="split-side">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow"><div class="card-title">Host</div></div>
+        </div>
+        <dl class="kv">
+          <dt>Incus server</dt>
+          <dd class="strong">{{.Host.ServerName}}{{if .Host.Version}} <span class="faint">v{{.Host.Version}}</span>{{end}}</dd>
+          <dt>Driver</dt>
+          <dd>{{.Host.Driver}}</dd>
+          <dt>Socket</dt>
+          <dd class="mono">{{.IncusSocket}}</dd>
+        </dl>
+
+        <div class="mt-16">
+          <div class="row mb-8">
+            <span class="small"><strong>Memory in use</strong></span>
+            <span class="spacer small muted">{{gb .Host.MemoryUsed}} / {{gb .Host.MemoryTotal}}</span>
+          </div>
+          <div class="progress {{usageClass .Host.UsagePercent}}"><span style="width: {{pct .Host.UsagePercent}}%"></span></div>
+        </div>
+
+        {{range .Host.Pools}}
+        <div class="mt-16">
+          <div class="row mb-8">
+            <span class="small"><strong>{{.Name}}</strong> <span class="faint">{{.Driver}}</span></span>
+            <span class="spacer small muted">{{gb .Used}} / {{gb .Total}}</span>
+          </div>
+          <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
+        </div>
+        {{end}}
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow"><div class="card-title">Recent activity</div></div>
+          <a class="btn-link" href="/activity">View all</a>
+        </div>
+        {{if .Activity}}
+          {{range .Activity}}
+          <div class="snap-row" style="padding:9px 0">
+            <div class="grow">
+              <div class="snap-name" style="font-size:13px">{{.Action}}{{if .Target}} <span class="faint">{{.Target}}</span>{{end}}</div>
+              <div class="snap-meta">{{.Username}} · {{ago .TS}}</div>
+            </div>
+            <span class="pill {{if eq .Status "ok"}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span>
+          </div>
+          {{end}}
+        {{else}}
+          <p class="muted small" style="margin:0">No activity recorded yet.</p>
+        {{end}}
+      </div>
+    </div>
+  </div>
+
+</div>
+{{end}}

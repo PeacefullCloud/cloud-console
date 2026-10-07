@@ -1,0 +1,105 @@
+{{define "tab_metrics"}}
+{{$inst := .Inst}}
+<div class="row-wrap mb-16">
+  <span class="small muted">Time range</span>
+  {{range .Windows}}
+  <a class="btn btn-sm {{if .Active}}btn-primary{{else}}{{end}}"
+     href="/instances/{{$inst.Name}}?tab=metrics&window={{.ID}}"
+     hx-get="/instances/{{$inst.Name}}/tab/metrics?window={{.ID}}"
+     hx-target="#tab-panel"
+     hx-swap="innerHTML">{{.Label}}</a>
+  {{end}}
+</div>
+
+<div class="chart">
+  <div class="chart-head">
+    <div class="grow">
+      <div class="chart-title">CPU utilization</div>
+      <span class="chart-legend">Average over the last {{.WindowLabel}}{{if $inst.CPU}} · {{$inst.CPU}} vCPU allocated{{end}}</span>
+    </div>
+    <span class="pill pill-info">{{pct .CPUSeries.Last}}% now</span>
+  </div>
+  {{if .CPUSeries.HasData}}
+  <div class="chart-body">
+    <div class="chart-axis"><span>{{pct .CPUSeries.Max}}%</span><span>{{pct (half .CPUSeries.Max)}}%</span><span>0%</span></div>
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="CPU utilization chart">
+      <g class="chart-grid">
+        <line x1="0" y1="0" x2="100" y2="0"/>
+        <line x1="0" y1="25" x2="100" y2="25"/>
+        <line x1="0" y1="50" x2="100" y2="50"/>
+        <line x1="0" y1="75" x2="100" y2="75"/>
+        <line x1="0" y1="100" x2="100" y2="100"/>
+      </g>
+      <path class="chart-area" d="{{.CPUSeries.Area}}"/>
+      <polyline class="chart-line" points="{{.CPUSeries.Points}}" vector-effect="non-scaling-stroke"/>
+    </svg>
+  </div>
+  <div class="chart-x">{{range .CPUSeries.Labels}}<span>{{.}}</span>{{end}}</div>
+  {{else}}
+  <div class="chart-empty">Not enough samples yet — the monitor samples every {{.SampleInterval}} seconds.</div>
+  {{end}}
+</div>
+
+<div class="chart">
+  <div class="chart-head">
+    <div class="grow">
+      <div class="chart-title">Memory utilization</div>
+      <span class="chart-legend">Share of the memory limit in use</span>
+    </div>
+    <span class="pill pill-info">{{gb $inst.MemUsed}} used</span>
+  </div>
+  {{if .MemSeries.HasData}}
+  <div class="chart-body">
+    <div class="chart-axis"><span>{{pct .MemSeries.Max}}%</span><span>{{pct (half .MemSeries.Max)}}%</span><span>0%</span></div>
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Memory utilization chart">
+      <g class="chart-grid">
+        <line x1="0" y1="0" x2="100" y2="0"/>
+        <line x1="0" y1="50" x2="100" y2="50"/>
+        <line x1="0" y1="100" x2="100" y2="100"/>
+      </g>
+      <path class="chart-area" d="{{.MemSeries.Area}}"/>
+      <polyline class="chart-line" points="{{.MemSeries.Points}}" vector-effect="non-scaling-stroke"/>
+    </svg>
+  </div>
+  <div class="chart-x">{{range .MemSeries.Labels}}<span>{{.}}</span>{{end}}</div>
+  {{else}}
+  <div class="chart-empty">Not enough samples yet.</div>
+  {{end}}
+</div>
+
+<div class="card mt-24">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Additional metrics</div>
+      <p class="card-sub">Run these inside the instance for a fuller picture.</p>
+    </div>
+  </div>
+  <div class="field">
+    <label>Memory usage</label>
+    <div class="copy-field">
+      <input type="text" readonly value="incus exec {{$inst.Name}} -- free -m">
+      <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- free -m">Copy</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>Process list</label>
+    <div class="copy-field">
+      <input type="text" readonly value="incus exec {{$inst.Name}} -- top -b -n1">
+      <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- top -b -n1">Copy</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>Disk usage</label>
+    <div class="copy-field">
+      <input type="text" readonly value="incus exec {{$inst.Name}} -- df -h">
+      <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- df -h">Copy</button>
+    </div>
+  </div>
+</div>
+
+<div class="row-wrap mt-24">
+  <span class="small muted">Network counters</span>
+  <span class="pill pill-info">↓ {{bytes $inst.NetRx}} received</span>
+  <span class="pill pill-info">↑ {{bytes $inst.NetTx}} sent</span>
+</div>
+{{end}}

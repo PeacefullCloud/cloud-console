@@ -1,0 +1,88 @@
+{{define "title"}}Activity{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Activity</h1>
+      <p class="page-sub">Every action the console performed, newest first.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+
+  {{if .Jobs}}
+  <div class="card">
+    <div class="card-head">
+      <div class="grow">
+        <div class="card-title">Background jobs</div>
+        <p class="card-sub">Long operations run in the console's worker pool.</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Job</th><th>Target</th><th>Status</th><th>Message</th><th>By</th><th class="num">Started</th></tr></thead>
+        <tbody>
+          {{range .Jobs}}
+          <tr>
+            <td><strong>{{jobTitle .Kind}}</strong></td>
+            <td class="mono">{{.Target}}</td>
+            <td>
+              {{if eq .Status "done"}}<span class="pill pill-ok">done</span>
+              {{else if eq .Status "failed"}}<span class="pill pill-err">failed</span>
+              {{else if eq .Status "running"}}<span class="pill pill-info">running</span>
+              {{else}}<span class="pill">{{.Status}}</span>{{end}}
+            </td>
+            <td class="muted small">{{if .Error}}{{.Error}}{{else}}{{.Message}}{{end}}</td>
+            <td class="muted">{{.CreatedBy}}</td>
+            <td class="num muted nowrap">{{datetime .CreatedAt}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="card">
+    <div class="card-head">
+      <div class="grow"><div class="card-title">Audit log</div></div>
+      <span class="muted small">{{.Total}} entr{{if eq .Total 1}}y{{else}}ies{{end}}</span>
+    </div>
+
+    {{if .Activity}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Action</th><th>Target</th><th>Detail</th><th>User</th><th>Result</th><th class="num">When</th></tr></thead>
+        <tbody>
+          {{range .Activity}}
+          <tr>
+            <td><strong>{{.Action}}</strong></td>
+            <td>{{if .Target}}{{.Target}}{{else}}<span class="faint">—</span>{{end}}</td>
+            <td class="muted small">{{if .Detail}}{{.Detail}}{{else}}—{{end}}</td>
+            <td class="muted">{{.Username}}</td>
+            <td><span class="pill {{if eq .Status "ok"}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span></td>
+            <td class="num muted nowrap">{{datetime .TS}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    {{if gt .Total .Limit}}
+    <div class="row-wrap mt-16">
+      <span class="muted small">Page {{.Page}} of {{.Pages}}</span>
+      <span class="spacer"></span>
+      {{if gt .Page 1}}<a class="btn btn-sm" href="/activity?page={{sub .Page 1}}">Newer</a>{{end}}
+      {{if lt .Page .Pages}}<a class="btn btn-sm" href="/activity?page={{add .Page 1}}">Older</a>{{end}}
+    </div>
+    {{end}}
+
+    {{else}}
+    <div class="empty">
+      <h3>No activity yet</h3>
+      <p>Actions taken in the console will be recorded here.</p>
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
