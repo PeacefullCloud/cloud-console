@@ -2,6 +2,7 @@ package web
 
 import (
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,6 +155,21 @@ func sortedKeys(devices map[string]map[string]string) []string {
 	return names
 }
 
+// ansiSequences matches terminal escape sequences: CSI (cursor moves,
+// colours, clears), OSC (titles, hyperlinks) and other ESC introductions.
+var ansiSequences = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b[()#][0-9A-Za-z]|\x1b[=>MEHc789]")
+
+// ansiControls matches stray control characters. Newlines and tabs survive.
+var ansiControls = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+// stripANSI removes terminal escape sequences and control characters from
+// console output so it renders as readable text.
+func stripANSI(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = ansiSequences.ReplaceAllString(s, "")
+	return ansiControls.ReplaceAllString(s, "")
+}
+
 // consoleTail reads the last n lines of an instance's console log.
 //
 // The read is capped so a chatty instance cannot exhaust the console's memory,
@@ -177,6 +193,13 @@ func (s *Server) consoleTail(name string, n int) (lines []string, problem string
 	all := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
 	if len(all) == 1 && all[0] == "" {
 		return nil, ""
+	}
+
+	// The console carries raw terminal output, including cursor moves, clear
+	// sequences and firmware chatter. Strip the escape sequences so the log
+	// reads as text instead of a wall of "[2J[001;001H" noise.
+	for i, line := range all {
+		all[i] = stripANSI(line)
 	}
 
 	// Keep only the tail, and mark that output was truncated.

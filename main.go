@@ -228,6 +228,10 @@ func run() error {
 		log.Info("shutting down")
 	}
 
+	// Unblock the SSE streams first: each one holds an HTTP connection
+	// open, and http.Server.Shutdown waits for in-flight handlers.
+	server.CloseEventStreams()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

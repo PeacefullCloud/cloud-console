@@ -1,16 +1,5 @@
 {{define "tab_metrics"}}
 {{$inst := .Inst}}
-<div class="row-wrap mb-16">
-  <span class="small muted">Time range</span>
-  {{range .Windows}}
-  <a class="btn btn-sm {{if .Active}}btn-primary{{else}}{{end}}"
-     href="/instances/{{$inst.Name}}?tab=metrics&window={{.ID}}"
-     hx-get="/instances/{{$inst.Name}}/tab/metrics?window={{.ID}}"
-     hx-target="#tab-panel"
-     hx-swap="innerHTML">{{.Label}}</a>
-  {{end}}
-</div>
-
 <div class="chart">
   <div class="chart-head">
     <div class="grow">
@@ -65,36 +54,6 @@
   {{else}}
   <div class="chart-empty">Not enough samples yet.</div>
   {{end}}
-</div>
-
-<div class="card mt-24">
-  <div class="card-head">
-    <div class="grow">
-      <div class="card-title">Additional metrics</div>
-      <p class="card-sub">Run these inside the instance for a fuller picture.</p>
-    </div>
-  </div>
-  <div class="field">
-    <label>Memory usage</label>
-    <div class="copy-field">
-      <input type="text" readonly value="incus exec {{$inst.Name}} -- free -m">
-      <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- free -m">Copy</button>
-    </div>
-  </div>
-  <div class="field">
-    <label>Process list</label>
-    <div class="copy-field">
-      <input type="text" readonly value="incus exec {{$inst.Name}} -- top -b -n1">
-      <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- top -b -n1">Copy</button>
-    </div>
-  </div>
-  <div class="field">
-    <label>Disk usage</label>
-    <div class="copy-field">
-      <input type="text" readonly value="incus exec {{$inst.Name}} -- df -h">
-      <button class="btn btn-sm" type="button" data-copy="incus exec {{$inst.Name}} -- df -h">Copy</button>
-    </div>
-  </div>
 </div>
 
 <div class="row-wrap mt-24">

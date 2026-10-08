@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -36,6 +37,9 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 	username := usernameOf(userFrom(r))
 
 	err := checkWriteAccess(r)
+	if err == nil && s.Backups.InProgress(name, backup) {
+		err = errors.New("backup " + backup + " is still in progress — wait for it to finish")
+	}
 	if err == nil {
 		err = s.Backups.Delete(r.Context(), name, backup)
 	}
@@ -52,6 +56,12 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if werr := checkWriteAccess(r); werr != nil {
 		s.App.Activity.Record(username, "Restore backup", name, backup, werr)
 		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", werr, "")
+		return
+	}
+	if s.Backups.InProgress(name, backup) {
+		busy := errors.New("backup " + backup + " is still in progress — wait for it to finish")
+		s.App.Activity.Record(username, "Restore backup", name, backup, busy)
+		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", busy, "")
 		return
 	}
 
@@ -75,6 +85,12 @@ func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 	if werr := checkWriteAccess(r); werr != nil {
 		s.App.Activity.Record(username, "Export backup", name, backup, werr)
 		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", werr, "")
+		return
+	}
+	if s.Backups.InProgress(name, backup) {
+		busy := errors.New("backup " + backup + " is still in progress — wait for it to finish")
+		s.App.Activity.Record(username, "Export backup", name, backup, busy)
+		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", busy, "")
 		return
 	}
 

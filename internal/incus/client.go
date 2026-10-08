@@ -381,7 +381,7 @@ func (c *Client) DeleteBackup(ctx context.Context, instanceName, backupName stri
 // The backup is written to disk first so it can be uploaded to independent
 // storage or re-imported later, exactly like the console's "backup vs snapshot"
 // split requires.
-func (c *Client) ExportBackup(instanceName, backupName, destPath string, onProgress func(int64)) (int64, error) {
+func (c *Client) ExportBackup(ctx context.Context, instanceName, backupName, destPath string, onProgress func(int64)) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
 		return 0, err
 	}
@@ -390,31 +390,54 @@ func (c *Client) ExportBackup(instanceName, backupName, destPath string, onProgr
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
 
-	req := &incusclient.BackupFileRequest{BackupFile: f}
-	if onProgress != nil {
-		// The SDK reports progress through a callback; forward the bytes sent.
-		req.ProgressHandler = func(p ioprogress.ProgressData) { onProgress(p.TransferredBytes) }
+	// The Incus SDK offers no cancellation for the download, so on context
+	// cancellation the transfer is abandoned rather than awaited: shutdown
+	// during a 40GB export must not hang, and the partial file is treated
+	// like any failed export (a later run truncates it).
+	type outcome struct {
+		size int64
+		err  error
 	}
+	done := make(chan outcome, 1)
+	go func() {
+		defer f.Close()
 
-	resp, err := c.srv.GetInstanceBackupFile(instanceName, backupName, req)
-	if err != nil {
-		return 0, err
-	}
+		req := &incusclient.BackupFileRequest{BackupFile: f}
+		if onProgress != nil {
+			// The SDK reports progress through a callback; forward the bytes sent.
+			req.ProgressHandler = func(p ioprogress.ProgressData) { onProgress(p.TransferredBytes) }
+		}
 
-	if err := f.Sync(); err != nil {
-		return 0, err
-	}
+		resp, err := c.srv.GetInstanceBackupFile(instanceName, backupName, req)
+		if err != nil {
+			done <- outcome{0, err}
+			return
+		}
 
-	if resp != nil && resp.Size > 0 {
-		return resp.Size, nil
+		if err := f.Sync(); err != nil {
+			done <- outcome{0, err}
+			return
+		}
+
+		if resp != nil && resp.Size > 0 {
+			done <- outcome{resp.Size, nil}
+			return
+		}
+		info, err := os.Stat(destPath)
+		if err != nil {
+			done <- outcome{0, err}
+			return
+		}
+		done <- outcome{info.Size(), nil}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case r := <-done:
+		return r.size, r.err
 	}
-	info, err := os.Stat(destPath)
-	if err != nil {
-		return 0, err
-	}
-	return info.Size(), nil
 }
 
 // ImportBackup re-creates an instance from a backup archive.

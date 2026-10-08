@@ -50,6 +50,9 @@
             </td>
             <td class="num">{{bytes .SizeBytes}}</td>
             <td>
+              {{if .Busy}}
+              <span class="pill pill-info" title="A backup operation is still running for this archive">in progress</span>
+              {{else}}
               <div class="row-tight">
                 {{if .LocalExists}}
                 <form method="post" action="/instances/{{.InstanceName}}/backups/{{.Name}}/restore"
@@ -64,6 +67,7 @@
                   <button class="btn btn-sm btn-danger" type="submit">Delete</button>
                 </form>
               </div>
+              {{end}}
             </td>
           </tr>
           {{end}}

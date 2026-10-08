@@ -48,13 +48,26 @@ type Server struct {
 	Deps
 	log *slog.Logger
 	mux *http.ServeMux
+
+	// streamCtx is cancelled on shutdown so long-lived SSE streams exit
+	// instead of holding http.Server.Shutdown until its timeout expires.
+	streamCtx   context.Context
+	stopStreams context.CancelFunc
 }
 
 // New builds the server and registers every route.
 func New(deps Deps) *Server {
 	s := &Server{Deps: deps, log: deps.App.Log, mux: http.NewServeMux()}
+	s.streamCtx, s.stopStreams = context.WithCancel(context.Background())
 	s.routes()
 	return s
+}
+
+// CloseEventStreams unblocks every open SSE stream. Call it before
+// http.Server.Shutdown so Ctrl+C shuts down promptly instead of waiting out
+// the shutdown timeout with a fatal "context deadline exceeded".
+func (s *Server) CloseEventStreams() {
+	s.stopStreams()
 }
 
 // Handler returns the middleware-wrapped handler.

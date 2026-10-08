@@ -196,6 +196,10 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.streamCtx.Done():
+			// Server shutdown: exit so http.Server.Shutdown does not
+			// wait out its timeout on this long-lived stream.
+			return
 		case <-heartbeat.C:
 			// Comment keeps proxies and the browser from timing out an
 			// idle stream when no jobs are running.

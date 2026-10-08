@@ -52,6 +52,11 @@ type Backup struct {
 	LocalExists bool
 	InIncus     bool
 	InS3        bool
+
+	// Busy is true while a backup job (create, export or restore) is
+	// queued or running for this backup. Mutating it meanwhile would
+	// corrupt the operation, so the UI withholds those buttons.
+	Busy bool
 }
 
 // Notifier is told when an instance changes so routing can be refreshed.
@@ -124,7 +129,69 @@ func (s *Service) List(ctx context.Context, instanceName string) ([]Backup, erro
 		}
 	}
 
+	s.markBusy(out)
 	return out, nil
+}
+
+// InProgress reports whether a backup job (create, export or restore) is
+// currently queued or running for the given backup.
+func (s *Service) InProgress(instanceName, name string) bool {
+	jobs, err := s.app.DB.ListActiveJobs()
+	if err != nil {
+		return false
+	}
+	for _, job := range jobs {
+		if job.Target != instanceName {
+			continue
+		}
+		switch job.Kind {
+		case JobCreate, JobExport, JobRestore:
+		default:
+			continue
+		}
+		payload, err := s.app.DB.JobPayload(job.ID)
+		if err != nil {
+			continue
+		}
+		var p backupPayload
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			continue
+		}
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// markBusy flags every backup that currently has a job in flight.
+func (s *Service) markBusy(out []Backup) {
+	jobs, err := s.app.DB.ListActiveJobs()
+	if err != nil {
+		return
+	}
+	busy := map[string]bool{}
+	for _, job := range jobs {
+		switch job.Kind {
+		case JobCreate, JobExport, JobRestore:
+		default:
+			continue
+		}
+		payload, err := s.app.DB.JobPayload(job.ID)
+		if err != nil {
+			continue
+		}
+		var p backupPayload
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			continue
+		}
+		busy[p.Instance+"\x00"+p.Name] = true
+	}
+	for i := range out {
+		if busy[out[i].InstanceName+"\x00"+out[i].Name] {
+			out[i].Busy = true
+		}
+	}
 }
 
 // All returns every backup the console tracks.
@@ -138,6 +205,7 @@ func (s *Service) All(ctx context.Context) ([]Backup, error) {
 	for _, r := range rows {
 		out = append(out, s.enrich(ctx, r))
 	}
+	s.markBusy(out)
 	return out, nil
 }
 
@@ -282,7 +350,7 @@ func (s *Service) createArchive(ctx context.Context, job *models.Job, payload ba
 		s.app.Jobs.Progress(job.ID, 55+int(current/(64<<20)), "Exporting the archive")
 	}
 
-	size, err := s.app.Incus.ExportBackup(payload.Instance, payload.Name, path, onProgress)
+	size, err := s.app.Incus.ExportBackup(ctx, payload.Instance, payload.Name, path, onProgress)
 	if err != nil {
 		return fmt.Errorf("export backup: %w", err)
 	}
@@ -347,7 +415,7 @@ func (s *Service) handleExport(ctx context.Context, job *models.Job) error {
 			_ = s.app.Incus.DeleteBackup(context.WithoutCancel(ctx), payload.Instance, payload.Name)
 		}()
 
-		if _, err := s.app.Incus.ExportBackup(payload.Instance, payload.Name, path, nil); err != nil {
+		if _, err := s.app.Incus.ExportBackup(ctx, payload.Instance, payload.Name, path, nil); err != nil {
 			return err
 		}
 	}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/peaceful/cloud-console/internal/instances"
@@ -244,5 +245,32 @@ func TestCreateRequestValidation(t *testing.T) {
 	vmReq.Kind = "virtual-machine"
 	if err := vmReq.Validate(); err != nil {
 		t.Fatalf("a valid VM request was rejected: %v", err)
+	}
+}
+
+func TestStripANSI(t *testing.T) {
+	// Real firmware noise from a VM console log: clear-screen and cursor
+	// moves around plain text that must survive.
+	raw := "\x1b[2J\x1b[001;001H\x1b[=3h\x1b[2J\x1b[001;001H" +
+		"BdsDxe: loading Boot0002 \"UEFI QEMU QEMU HARDDISK \" from PciRoot(0x0)"
+	got := stripANSI(raw)
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("escape sequences survived: %q", got)
+	}
+	if !strings.Contains(got, "BdsDxe: loading Boot0002") {
+		t.Errorf("readable text was lost: %q", got)
+	}
+
+	cases := map[string]string{
+		"\x1b[32mOK\x1b[0m":      "OK",
+		"\x1b]0;title\x07done":   "done",
+		"a\rb\x00c\x7fd":         "abcd",
+		"line1\nline2\tindented": "line1\nline2\tindented",
+		"plain text":             "plain text",
+	}
+	for in, want := range cases {
+		if got := stripANSI(in); got != want {
+			t.Errorf("stripANSI(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

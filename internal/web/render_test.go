@@ -510,3 +510,31 @@ func TestRenderTOTPFragments(t *testing.T) {
 		}
 	})
 }
+
+// A backup with a job in flight must not offer delete/restore/export —
+// otherwise the record vanishes while the job (and its tracker) keeps going.
+func TestBackupBusyHidesActions(t *testing.T) {
+	renderer := newTestRenderer(t)
+	inst := sampleInstance()
+	data := instanceData{
+		baseData: sampleBase(),
+		Inst:     &inst,
+		Tab:      "backups",
+		Backups: []backups.Backup{{
+			Name: "wp-example-20261007-1200", InstanceName: inst.Name,
+			Status: "running", Busy: true, CreatedAt: time.Now(),
+		}},
+	}
+
+	var buf bytes.Buffer
+	if err := renderer.ExecutePartial(&buf, "instance", "tab_backups", data); err != nil {
+		t.Fatalf("render tab backups: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "/delete") || strings.Contains(out, "/restore") || strings.Contains(out, "/export") {
+		t.Error("a busy backup must not offer delete/restore/export")
+	}
+	if !strings.Contains(out, "in progress") {
+		t.Error("a busy backup should show its in-progress state")
+	}
+}
