@@ -71,10 +71,18 @@
     }
   });
 
-  // Destructive actions ask for confirmation.
+  // Destructive actions ask for confirmation. Forms submitted via HTMX carry
+  // hx-confirm so HTMX prompts instead — confirming twice would be worse.
+  // (Without HTMX loaded, hx-* attributes are inert and this still applies.)
   document.addEventListener("submit", function (event) {
     var form = event.target.closest("form[data-confirm]");
-    if (form && !window.confirm(form.getAttribute("data-confirm"))) {
+    if (!form) {
+      return;
+    }
+    if (window.htmx && (form.hasAttribute("hx-post") || form.hasAttribute("hx-get"))) {
+      return;
+    }
+    if (!window.confirm(form.getAttribute("data-confirm"))) {
       event.preventDefault();
     }
   });
@@ -115,6 +123,103 @@
     if (target && target.id === "job-tracker") {
       noteTrackerState(!!target.querySelector(".job"));
     }
+  });
+
+  // Instance lifecycle actions (stop/start/reboot) swap in place instead of
+  // reloading the page. The POST response already carries fresh buttons and
+  // status via out-of-band swaps; the tab panel below still shows the old
+  // state, and slow fields (address, uptime) converge a little later, so
+  // refresh both here without a full reload. Deletes navigate via
+  // HX-Redirect and need no handling.
+  var headerPollTimers = [];
+  function refreshInstanceTab() {
+    var panel = document.getElementById("tab-panel");
+    if (!panel || !window.htmx) {
+      return;
+    }
+    var active = document.querySelector(".tabs .tab.active");
+    var url = active && active.getAttribute("hx-get");
+    if (!url) {
+      return;
+    }
+    window.htmx.ajax("GET", url, { target: "#tab-panel", swap: "innerHTML" });
+  }
+  function pollInstanceHeader(name) {
+    if (!name || !window.htmx) {
+      return;
+    }
+    headerPollTimers.forEach(function (timer) { clearTimeout(timer); });
+    headerPollTimers = [];
+    // The header endpoint renders the same out-of-band fragments, so each
+    // poll swaps the actions and status in place (swap none: only the OOB
+    // parts apply).
+    [2000, 6000, 12000, 25000].forEach(function (delay) {
+      headerPollTimers.push(setTimeout(function () {
+        if (!document.getElementById("instance-actions")) {
+          return;
+        }
+        window.htmx.ajax("GET", "/instances/" + encodeURIComponent(name) + "/header", { swap: "none" });
+      }, delay));
+    });
+  }
+  function instanceNameFromRequest(elt) {
+    if (!elt || !elt.getAttribute) {
+      return null;
+    }
+    var url = elt.getAttribute("hx-post") || elt.getAttribute("action") || "";
+    var match = url.match(/\/instances\/([^\/]+)\/state/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+  document.addEventListener("htmx:afterRequest", function (event) {
+    var detail = event.detail || {};
+    if (!detail.successful) {
+      return;
+    }
+    var name = instanceNameFromRequest(detail.elt);
+    if (!name) {
+      return;
+    }
+    refreshInstanceTab();
+    pollInstanceHeader(name);
+  });
+  // The state response also triggers this event via HX-Trigger; refresh from
+  // the current path in case a future form stops matching the pattern above.
+  document.addEventListener("instance-updated", function () {
+    refreshInstanceTab();
+    var match = window.location.pathname.match(/^\/instances\/([^\/]+)/);
+    if (match && match[1]) {
+      pollInstanceHeader(decodeURIComponent(match[1]));
+    }
+  });
+
+  // AJAX flash messages (out-of-band #flash-wrap / #settings-flash swaps)
+  // clear themselves; full page loads keep theirs until the next navigation.
+  document.addEventListener("htmx:oobAfterSwap", function (event) {
+    var target = event.detail && event.detail.target;
+    if (!target) {
+      return;
+    }
+    // After a wrong 2FA code the form swaps in place with a fresh challenge;
+    // put the cursor back in the code field.
+    if (target.id === "totp-form") {
+      var input = target.querySelector('input[name="code"]');
+      if (input) {
+        input.focus();
+        input.select();
+      }
+      return;
+    }
+    if (target.id !== "flash-wrap" && target.id !== "settings-flash" && target.id !== "login-flash") {
+      return;
+    }
+    if (target.textContent.trim() === "") {
+      return;
+    }
+    setTimeout(function () {
+      if (document.body.contains(target)) {
+        target.innerHTML = "";
+      }
+    }, 6000);
   });
 
   // The job tracker polls itself; stop polling once every job has finished by

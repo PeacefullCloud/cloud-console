@@ -11,6 +11,7 @@
     </div>
   </div>
 
+  {{if canWrite .User}}
   <form method="post" action="/instances/{{$inst.Name}}/backups" class="row-wrap">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="text" name="backup_name" value="{{.SuggestedBackup}}" placeholder="backup name" style="flex:1 1 220px">
@@ -19,6 +20,9 @@
     {{end}}
     <button class="btn btn-primary" type="submit">Create backup</button>
   </form>
+  {{else}}
+  {{template "read_only_note" .}}
+  {{end}}
   {{if not .S3Enabled}}
   <p class="hint mt-8">Configure an S3-compatible target in <a href="/settings">Settings</a> to export backups off-host.</p>
   {{end}}
@@ -59,6 +63,7 @@
           </td>
           <td class="num">{{bytes .SizeBytes}}</td>
           <td>
+            {{if canWrite $.User}}
             <div class="row-tight">
               {{if .LocalExists}}
               <form method="post" action="/instances/{{$inst.Name}}/backups/{{.Name}}/restore"
@@ -79,6 +84,7 @@
                 <button class="btn btn-sm btn-danger" type="submit">Delete</button>
               </form>
             </div>
+            {{end}}
           </td>
         </tr>
         {{end}}

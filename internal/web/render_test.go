@@ -373,6 +373,73 @@ func TestRenderHTMXFragments(t *testing.T) {
 			t.Error("selected image missing from blueprint grid")
 		}
 	})
+
+	// Lifecycle actions must swap in place via HTMX instead of reloading.
+	t.Run("instance_card_async", func(t *testing.T) {
+		var buf bytes.Buffer
+		inst := sampleInstance()
+		data := map[string]any{"Inst": inst, "CSRF": "test-token", "Role": "admin"}
+		if err := renderer.ExecutePartial(&buf, "instance", "instance_card", data); err != nil {
+			t.Fatalf("render instance card: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `id="inst-card-wp-example"`) {
+			t.Error("instance card needs a stable id for HTMX targeting")
+		}
+		if !strings.Contains(out, "hx-post") {
+			t.Error("instance card actions should submit via HTMX")
+		}
+	})
+
+	t.Run("instance_card_viewer", func(t *testing.T) {
+		var buf bytes.Buffer
+		inst := sampleInstance()
+		data := map[string]any{"Inst": inst, "CSRF": "test-token", "Role": "viewer"}
+		if err := renderer.ExecutePartial(&buf, "instance", "instance_card", data); err != nil {
+			t.Fatalf("render instance card: %v", err)
+		}
+		if strings.Contains(buf.String(), "hx-post") {
+			t.Error("viewers must not see instance lifecycle actions")
+		}
+	})
+
+	t.Run("instance_actions", func(t *testing.T) {
+		var buf bytes.Buffer
+		inst := sampleInstance()
+		data := instanceData{baseData: sampleBase(), Inst: &inst}
+		if err := renderer.ExecutePartial(&buf, "instance", "instance_actions", data); err != nil {
+			t.Fatalf("render instance actions: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `id="instance-actions"`) {
+			t.Error("instance actions container is missing")
+		}
+		if !strings.Contains(out, "hx-post") || !strings.Contains(out, `hx-swap="none"`) {
+			t.Error("instance actions should submit via HTMX without swapping")
+		}
+	})
+
+	t.Run("instance_fragments", func(t *testing.T) {
+		var buf bytes.Buffer
+		inst := sampleInstance()
+		data := instanceData{baseData: sampleBase(), Inst: &inst}
+		for _, name := range []string{"instance_detail", "instance_fragments", "instance_state_response", "flash_wrap", "flash_oob"} {
+			buf.Reset()
+			if err := renderer.ExecutePartial(&buf, "instance", name, data); err != nil {
+				t.Fatalf("render %s: %v", name, err)
+			}
+			if buf.Len() == 0 {
+				t.Errorf("%s rendered nothing", name)
+			}
+		}
+		buf.Reset()
+		if err := renderer.ExecutePartial(&buf, "instance", "instance_fragments", data); err != nil {
+			t.Fatalf("render instance fragments: %v", err)
+		}
+		if !strings.Contains(buf.String(), "hx-swap-oob") {
+			t.Error("instance fragments should carry out-of-band swaps")
+		}
+	})
 }
 
 func TestRenderLoginPage(t *testing.T) {
@@ -387,4 +454,59 @@ func TestRenderLoginPage(t *testing.T) {
 	if !strings.Contains(buf.String(), "</html>") {
 		t.Error("login page is incomplete")
 	}
+}
+
+// The TOTP step retries in place: a wrong code re-renders the form with a
+// fresh challenge plus an out-of-band flash, without a page reload.
+func TestRenderTOTPFragments(t *testing.T) {
+	renderer := newTestRenderer(t)
+
+	t.Run("totp_page", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := renderer.ExecuteStandalone(&buf, "templates/login.html", "totp_page", totpData{
+			Title: "Two-factor authentication", CSRF: "token",
+			Challenge: "challenge-1", Username: "admin", Next: "/instances",
+		}); err != nil {
+			t.Fatalf("render totp page: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `id="totp-form"`) {
+			t.Error("totp page should contain the code form")
+		}
+		if !strings.Contains(out, "hx-post") {
+			t.Error("totp form should submit via HTMX")
+		}
+	})
+
+	t.Run("totp_form_response", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := renderer.ExecuteStandalone(&buf, "templates/login.html", "totp_form_response", totpData{
+			CSRF: "token", Challenge: "challenge-2", Username: "admin",
+			Error: "Incorrect code. Try the current code from your app.",
+		}); err != nil {
+			t.Fatalf("render totp form response: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "hx-swap-oob") {
+			t.Error("totp form response should carry out-of-band swaps")
+		}
+		if !strings.Contains(out, "challenge-2") {
+			t.Error("totp form response should carry the fresh challenge")
+		}
+		if !strings.Contains(out, "Incorrect code") {
+			t.Error("totp form response should contain the error")
+		}
+	})
+
+	t.Run("login_flash_oob", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := renderer.ExecuteStandalone(&buf, "templates/login.html", "login_flash_oob", loginData{
+			Error: "Incorrect username or password.",
+		}); err != nil {
+			t.Fatalf("render login flash: %v", err)
+		}
+		if !strings.Contains(buf.String(), "hx-swap-oob") {
+			t.Error("login flash should swap out-of-band")
+		}
+	})
 }

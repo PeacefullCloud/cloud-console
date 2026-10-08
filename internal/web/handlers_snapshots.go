@@ -14,7 +14,10 @@ func (s *Server) handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	snapName := strings.TrimSpace(r.FormValue("snapshot_name"))
 	note := strings.TrimSpace(r.FormValue("note"))
 
-	err := s.Snapshots.Create(r.Context(), name, snapName, note, username)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Snapshots.Create(r.Context(), name, snapName, note, username)
+	}
 	s.App.Activity.Record(username, "Create snapshot", name, snapName, err)
 
 	if err != nil && strings.Contains(err.Error(), "already exists") {
@@ -36,7 +39,10 @@ func (s *Server) handleSnapshotDelete(w http.ResponseWriter, r *http.Request) {
 	snap := r.PathValue("snapshot")
 	username := usernameOf(userFrom(r))
 
-	err := s.Snapshots.Delete(r.Context(), name, snap)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Snapshots.Delete(r.Context(), name, snap)
+	}
 	s.App.Activity.Record(username, "Delete snapshot", name, snap, err)
 
 	s.finish(w, r, s.InstanceURL(name)+"?tab=snapshots", err, "Snapshot "+snap+" deleted.")
@@ -47,7 +53,10 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	snap := r.PathValue("snapshot")
 	username := usernameOf(userFrom(r))
 
-	err := s.Snapshots.Restore(r.Context(), name, snap)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Snapshots.Restore(r.Context(), name, snap)
+	}
 	s.App.Activity.Record(username, "Restore snapshot", name, snap, err)
 
 	s.finish(w, r, s.InstanceURL(name)+"?tab=snapshots", err, "Restored "+name+" to "+snap+".")

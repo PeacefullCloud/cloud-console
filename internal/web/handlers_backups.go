@@ -12,6 +12,12 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	backupName := strings.TrimSpace(r.FormValue("backup_name"))
 	exportToS3 := r.FormValue("export_s3") != ""
 
+	if werr := checkWriteAccess(r); werr != nil {
+		s.App.Activity.Record(username, "Create backup", name, backupName, werr)
+		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", werr, "")
+		return
+	}
+
 	job, err := s.Backups.EnqueueCreate(username, name, backupName, exportToS3)
 	s.App.Activity.Record(username, "Create backup", name, backupName, err)
 
@@ -29,7 +35,10 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 	backup := r.PathValue("backup")
 	username := usernameOf(userFrom(r))
 
-	err := s.Backups.Delete(r.Context(), name, backup)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Backups.Delete(r.Context(), name, backup)
+	}
 	s.App.Activity.Record(username, "Delete backup", name, backup, err)
 
 	s.finish(w, r, s.InstanceURL(name)+"?tab=backups", err, "Backup "+backup+" deleted.")
@@ -39,6 +48,12 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	backup := r.PathValue("backup")
 	username := usernameOf(userFrom(r))
+
+	if werr := checkWriteAccess(r); werr != nil {
+		s.App.Activity.Record(username, "Restore backup", name, backup, werr)
+		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", werr, "")
+		return
+	}
 
 	job, err := s.Backups.EnqueueRestore(username, name, backup)
 	s.App.Activity.Record(username, "Restore backup", name, backup, err)
@@ -56,6 +71,12 @@ func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	backup := r.PathValue("backup")
 	username := usernameOf(userFrom(r))
+
+	if werr := checkWriteAccess(r); werr != nil {
+		s.App.Activity.Record(username, "Export backup", name, backup, werr)
+		s.finish(w, r, s.InstanceURL(name)+"?tab=backups", werr, "")
+		return
+	}
 
 	job, err := s.Backups.EnqueueExport(username, name, backup)
 	s.App.Activity.Record(username, "Export backup", name, backup, err)

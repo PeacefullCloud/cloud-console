@@ -78,6 +78,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /login", s.handleLoginPage)
 	m.HandleFunc("POST /login", s.handleLoginSubmit)
+	m.HandleFunc("GET /login/totp", s.handleTOTPPage)
 	m.HandleFunc("POST /login/totp", s.handleLoginTOTPSubmit)
 	m.HandleFunc("POST /logout", s.handleLogout)
 
@@ -88,6 +89,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /instances/{name}", s.handleInstance)
 	m.HandleFunc("GET /instances/{name}/tab/{tab}", s.handleInstanceTab)
+	m.HandleFunc("GET /instances/{name}/header", s.handleInstanceHeader)
 
 	m.HandleFunc("POST /instances/{name}/state", s.handleInstanceState)
 	m.HandleFunc("POST /instances/{name}/delete", s.handleInstanceDelete)
@@ -118,6 +120,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /settings", s.handleSettings)
 
 	m.HandleFunc("POST /settings/users", s.handleUserCreate)
+	m.HandleFunc("POST /settings/users/{id}/delete", s.handleUserDelete)
 	m.HandleFunc("POST /settings/password", s.handlePasswordChange)
 	m.HandleFunc("POST /settings/totp/setup", s.handleTOTPSetup)
 	m.HandleFunc("POST /settings/totp/enable", s.handleTOTPEnable)
@@ -406,6 +409,29 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, fallback string, e
 	s.log.Warn("request failed", "path", r.URL.Path, "err", err)
 	s.setFlash(w, "err", friendlyError(err))
 	s.redirectBack(w, r, fallback)
+}
+
+// errReadOnly is reported when a viewer role attempts a mutation.
+var errReadOnly = errors.New("your account has read-only access — ask an admin to make this change")
+
+// errAdminOnly is reported when a non-admin attempts user management.
+var errAdminOnly = errors.New("admin access is required for this action")
+
+// checkWriteAccess blocks read-only (viewer) roles from mutating anything.
+// Every infrastructure-changing handler must call it before acting.
+func checkWriteAccess(r *http.Request) error {
+	if user := userFrom(r); user == nil || !auth.CanWrite(user.Role) {
+		return errReadOnly
+	}
+	return nil
+}
+
+// checkAdminAccess blocks non-admin roles from managing console users.
+func checkAdminAccess(r *http.Request) error {
+	if user := userFrom(r); user == nil || !auth.CanAdmin(user.Role) {
+		return errAdminOnly
+	}
+	return nil
 }
 
 // succeed reports a successful mutation and redirects back.

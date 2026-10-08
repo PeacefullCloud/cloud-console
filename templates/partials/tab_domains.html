@@ -11,12 +11,16 @@
     </div>
   </div>
 
+  {{if canWrite .User}}
   <form method="post" action="/instances/{{$inst.Name}}/domains" class="row-wrap">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="text" name="domain" placeholder="example.com" style="flex:1 1 240px" required>
     <input type="number" name="port" value="80" min="1" max="65535" style="width:110px" title="Container port">
     <button class="btn btn-primary" type="submit">Add domain</button>
   </form>
+  {{else}}
+  {{template "read_only_note" .}}
+  {{end}}
 
   {{if .Domains}}
   <div class="table-wrap mt-16">
@@ -38,11 +42,13 @@
             {{else}}<span class="pill pill-warn">no upstream</span>{{end}}
           </td>
           <td>
+            {{if canWrite $.User}}
             <form method="post" action="/instances/{{$inst.Name}}/domains/{{.ID}}/delete"
                   data-confirm="Remove {{.Domain}} from {{$inst.Name}}?">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <button class="btn btn-sm btn-danger" type="submit">Remove</button>
             </form>
+            {{end}}
           </td>
         </tr>
         {{end}}

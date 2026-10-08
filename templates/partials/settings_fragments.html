@@ -1,0 +1,113 @@
+{{- /* Settings fragments for HTMX (AJAX) form operations.
+       User management refreshes #users-list in place; the TOTP card refreshes
+       #totp-card in place. Flash feedback travels in #settings-flash via
+       out-of-band swaps, so the page never fully reloads. Contexts:
+       usersFragmentData for users_*, totpFragmentData for totp_*. */ -}}
+
+{{define "settings_flash"}}
+<div id="settings-flash" aria-live="polite">{{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}</div>
+{{end}}
+
+{{define "settings_flash_oob"}}
+<div id="settings-flash" hx-swap-oob="innerHTML:#settings-flash" aria-live="polite">{{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}</div>
+{{end}}
+
+{{define "users_list"}}
+<div id="users-list">
+  {{range .Users}}
+  <div class="snap-row" style="padding:9px 0">
+    {{if and (canAdmin $.User) (ne .ID $.User.ID)}}
+    <form method="post" action="/settings/users/{{.ID}}/delete"
+          hx-post="/settings/users/{{.ID}}/delete"
+          hx-target="#users-list" hx-swap="outerHTML" hx-disabled-elt="find button"
+          hx-confirm="Delete user {{.Username}}? They will be signed out immediately."
+          data-confirm="Delete user {{.Username}}? They will be signed out immediately.">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button class="icon-btn" type="submit" title="Delete {{.Username}}" style="color:var(--red)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>
+      </button>
+    </form>
+    {{end}}
+    <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;font-weight:700;font-size:12px">{{initials .Username}}</span>
+    <div class="grow">
+      <div class="snap-name" style="font-size:13px">{{.Username}}{{if eq .Username $.User.Username}} <span class="faint">(you)</span>{{end}}</div>
+      <div class="snap-meta">{{.Role}}{{if .LastLoginAt}} · last seen {{ago .LastLoginAt}}{{else}} · never signed in{{end}}</div>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{- /* Full HTMX response to user create/delete. The main body is the fresh
+       users list (list forms target it with outerHTML); the OOB parts update
+       the flash and the user count shown in the card head. */ -}}
+{{define "users_response"}}
+{{template "users_list" .}}
+{{template "settings_flash_oob" .}}
+<span id="users-count" hx-swap-oob="outerHTML:#users-count" class="muted small">{{len .Users}}</span>
+{{end}}
+
+{{define "totp_card"}}
+<div class="card" id="totp-card">
+  <div class="card-head">
+    <div class="grow"><div class="card-title">Two-factor authentication</div></div>
+    {{if .TOTPEnabled}}<span class="pill pill-ok">on</span>{{else}}<span class="pill">off</span>{{end}}
+  </div>
+  {{if .TOTPEnabled}}
+  <p class="muted small">Sign-in asks for a code from your authenticator app after the password.</p>
+  <form method="post" action="/settings/totp/disable"
+        hx-post="/settings/totp/disable" hx-target="#totp-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="field">
+      <label for="totp_current_password">Confirm with your password to turn it off</label>
+      <input id="totp_current_password" name="current_password" type="password" required>
+    </div>
+    <button class="btn btn-block" type="submit">Turn off two-factor</button>
+  </form>
+  {{else if .TOTPSetupSecret}}
+  <p class="muted small">Scan this with your authenticator app (e.g. Google Authenticator, Authy, 1Password), then confirm with a code. Manual entry works too.</p>
+  {{if .TOTPSetupQR}}
+  <div style="display:grid;place-items:center;background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:16px">
+    <img src="{{safeURL .TOTPSetupQR}}" alt="Two-factor setup QR code" width="200" height="200">
+  </div>
+  {{end}}
+  <div class="field">
+    <label>Secret key (manual entry)</label>
+    <div class="copy-field">
+      <input type="text" readonly value="{{.TOTPSetupSecret}}" onclick="this.select()">
+      <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupSecret}}">Copy</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>Setup address (manual entry)</label>
+    <div class="copy-field">
+      <input type="text" readonly value="{{.TOTPSetupURL}}" onclick="this.select()">
+      <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupURL}}">Copy</button>
+    </div>
+  </div>
+  <form method="post" action="/settings/totp/enable"
+        hx-post="/settings/totp/enable" hx-target="#totp-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="field">
+      <label for="totp_code">6-digit code from your app</label>
+      <input id="totp_code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required placeholder="123456">
+    </div>
+    <button class="btn btn-primary btn-block" type="submit">Confirm and turn on</button>
+  </form>
+  {{else}}
+  <p class="muted small">Add a code from your authenticator app as a second step at sign-in.</p>
+  <form method="post" action="/settings/totp/setup"
+        hx-post="/settings/totp/setup" hx-target="#totp-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn btn-block" type="submit">Set up two-factor</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+
+{{- /* Full HTMX response to TOTP setup/enable/disable. The main body is the
+       fresh TOTP card; the flash travels out-of-band. */ -}}
+{{define "totp_response"}}
+{{template "totp_card" .}}
+{{template "settings_flash_oob" .}}
+{{end}}

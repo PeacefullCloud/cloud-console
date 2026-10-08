@@ -42,14 +42,22 @@
         <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"/>
       </svg>
     </a>
-    <form method="post" action="/logout" class="row-tight">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button type="submit" class="row-tight" title="Sign out">
+    <details class="menu user-menu">
+      <summary class="user-chip" title="Account" aria-haspopup="menu">
         <span class="avatar">{{initials .User.Username}}</span>
         <span class="nowrap">{{.User.Username}}</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-      </button>
-    </form>
+      </summary>
+      <div class="menu-pop" role="menu">
+        <div class="menu-head">Signed in as <strong>{{.User.Username}}</strong></div>
+        <a href="/settings" role="menuitem">Settings</a>
+        <a href="/activity" role="menuitem">Activity</a>
+        <form method="post" action="/logout">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <button type="submit" role="menuitem">Sign out</button>
+        </form>
+      </div>
+    </details>
   </nav>
 </header>
 

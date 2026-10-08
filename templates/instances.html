@@ -11,7 +11,7 @@
       </p>
     </div>
     <div class="page-actions">
-      <a class="btn btn-primary" href="/create">Create instance</a>
+      {{if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
     </div>
   </div>
 
@@ -41,7 +41,7 @@
       </div>
       <div class="pool-sub">{{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</div>
       <div class="inst-grid">
-        {{range .Instances}}{{template "instance_card" (dict "Inst" . "CSRF" $.CSRF)}}{{end}}
+        {{range .Instances}}{{template "instance_card" (dict "Inst" . "CSRF" $.CSRF "Role" $.User.Role)}}{{end}}
       </div>
     </section>
     {{end}}
@@ -49,7 +49,7 @@
     <div class="empty">
       <h3>{{if .Query}}No instances match “{{.Query}}”{{else}}No instances yet{{end}}</h3>
       <p>{{if .Query}}Try a different name, image or domain.{{else}}Create your first Incus instance to get started.{{end}}</p>
-      {{if .Query}}<a class="btn" href="/instances">Clear filter</a>{{else}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
+      {{if .Query}}<a class="btn" href="/instances">Clear filter</a>{{else if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
     </div>
   {{end}}
 

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -13,6 +14,13 @@ import (
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/snapshots"
 )
+
+// isHTMX reports whether the request was issued by HTMX (AJAX) rather than a
+// plain form submission. HTMX responses use out-of-band swaps so the page
+// updates in place instead of fully reloading.
+func isHTMX(r *http.Request) bool {
+	return r.Header.Get("HX-Request") == "true"
+}
 
 // --- dashboard ------------------------------------------------------------
 
@@ -135,6 +143,11 @@ func (s *Server) groupByPool(list []instances.Instance) []poolGroup {
 // --- create wizard --------------------------------------------------------
 
 func (s *Server) handleCreatePage(w http.ResponseWriter, r *http.Request) {
+	if err := checkWriteAccess(r); err != nil {
+		s.setFlash(w, "err", err.Error())
+		http.Redirect(w, r, "/instances", http.StatusSeeOther)
+		return
+	}
 	data, err := s.createData(w, r)
 	if err != nil {
 		s.renderError(w, r, "Create an instance", "instances", err)
@@ -253,6 +266,12 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r)
 	if user == nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := checkWriteAccess(r); err != nil {
+		s.App.Activity.Record(user.Username, "Create instance", "", "", err)
+		s.fail(w, r, "/create", err)
 		return
 	}
 
@@ -461,27 +480,137 @@ func (s *Server) handleInstanceState(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var err error
 
-	switch action {
-	case "start":
-		err = s.Instances.Start(ctx, name)
-	case "stop":
-		err = s.Instances.Stop(ctx, name)
-	case "restart":
-		err = s.Instances.Restart(ctx, name)
-	default:
-		err = errors.New("unknown action " + action)
+	if werr := checkWriteAccess(r); werr != nil {
+		err = werr
+	} else {
+		switch action {
+		case "start":
+			err = s.Instances.Start(ctx, name)
+		case "stop":
+			err = s.Instances.Stop(ctx, name)
+		case "restart":
+			err = s.Instances.Restart(ctx, name)
+		default:
+			err = errors.New("unknown action " + action)
+		}
 	}
 
 	s.App.Activity.Record(username, titleAction(action), name, "", err)
+
+	// HTMX (AJAX) requests get an in-place update — the fresh instance card
+	// plus out-of-band swaps for the detail page regions — instead of a
+	// redirect that reloads the whole page.
+	if isHTMX(r) {
+		s.serveInstanceStateFragments(w, r, name, action, err)
+		return
+	}
+
 	s.finish(w, r, s.InstanceURL(name), err, titleAction(action)+" requested for "+name+".")
+}
+
+// serveInstanceStateFragments renders the HTMX response for a lifecycle
+// action (start/stop/restart, or a failed delete).
+func (s *Server) serveInstanceStateFragments(w http.ResponseWriter, r *http.Request, name, action string, actionErr error) {
+	csrf := csrfFrom(r)
+
+	if actionErr != nil {
+		// Re-read the instance so buttons and status still refresh; if it is
+		// gone entirely there is nothing fresh to render, so swap the flash
+		// message only.
+		if inst, err := s.Instances.Get(r.Context(), name); err == nil {
+			s.renderInstanceState(w, instanceData{
+				baseData: baseData{CSRF: csrf, User: userFrom(r), Error: friendlyError(actionErr)},
+				Inst:     inst,
+			}, name, action)
+			return
+		}
+		if err := s.Renderer.RenderPartial(w, "instance", "flash_oob", instanceData{
+			baseData: baseData{CSRF: csrf, User: userFrom(r), Error: friendlyError(actionErr)},
+		}); err != nil {
+			s.log.Error("render instance flash", "err", err, "instance", name)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	inst, err := s.Instances.Get(r.Context(), name)
+	if err != nil {
+		if renderErr := s.Renderer.RenderPartial(w, "instance", "flash_oob", instanceData{
+			baseData: baseData{CSRF: csrf, User: userFrom(r), Error: friendlyError(err)},
+		}); renderErr != nil {
+			s.log.Error("render instance flash", "err", renderErr, "instance", name)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	s.renderInstanceState(w, instanceData{
+		baseData: baseData{CSRF: csrf, User: userFrom(r), Notice: titleAction(action) + " requested for " + name + "."},
+		Inst:     inst,
+	}, name, action)
+}
+
+// renderInstanceState writes the fresh card plus the detail page out-of-band
+// fragments, and notifies client listeners which instance changed so the tab
+// panel can refresh itself without a reload.
+func (s *Server) renderInstanceState(w http.ResponseWriter, data instanceData, name, action string) {
+	if trigger, err := json.Marshal(map[string]map[string]string{
+		"instance-updated": {"name": name, "action": action},
+	}); err == nil {
+		w.Header().Set("HX-Trigger", string(trigger))
+	}
+	if err := s.Renderer.RenderPartial(w, "instance", "instance_state_response", data); err != nil {
+		s.log.Error("render instance state", "err", err, "instance", name)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
+// handleInstanceHeader returns fresh out-of-band fragments for the detail
+// page. The client polls it after a lifecycle action until slow fields
+// (address, uptime) converge. It must never consume the flash cookie, so it
+// deliberately avoids newBase and renders with an empty flash.
+func (s *Server) handleInstanceHeader(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	inst, err := s.Instances.Get(r.Context(), name)
+	if err != nil {
+		http.Error(w, friendlyError(err), http.StatusNotFound)
+		return
+	}
+
+	data := instanceData{
+		baseData: baseData{CSRF: csrfFrom(r), User: userFrom(r)},
+		Inst:     inst,
+	}
+	if err := s.Renderer.RenderPartial(w, "instance", "instance_fragments", data); err != nil {
+		s.log.Error("render instance header", "err", err, "instance", name)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) handleInstanceDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	username := usernameOf(userFrom(r))
 
-	err := s.Instances.Delete(r.Context(), name)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Instances.Delete(r.Context(), name)
+	}
 	s.App.Activity.Record(username, "Delete instance", name, "", err)
+
+	// HTMX (AJAX) deletes navigate to the list via HX-Redirect without ever
+	// re-rendering the now-deleted detail page.
+	if isHTMX(r) {
+		if err != nil {
+			s.serveInstanceStateFragments(w, r, name, "delete", err)
+			return
+		}
+		s.Monitoring.Forget(name)
+		s.setFlash(w, "ok", "Deleted "+name+".")
+		w.Header().Set("HX-Redirect", "/instances")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	if err != nil {
 		s.fail(w, r, s.InstanceURL(name), err)
@@ -501,7 +630,10 @@ func (s *Server) handleInstanceRename(w http.ResponseWriter, r *http.Request) {
 	newName := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
 	username := usernameOf(userFrom(r))
 
-	err := s.Instances.Rename(r.Context(), name, newName)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Instances.Rename(r.Context(), name, newName)
+	}
 	s.App.Activity.Record(username, "Rename instance", name, "to "+newName, err)
 
 	if err != nil {
@@ -518,7 +650,11 @@ func (s *Server) handleInstanceRebuild(w http.ResponseWriter, r *http.Request) {
 	image := r.FormValue("image")
 	username := usernameOf(userFrom(r))
 
-	job, err := s.Instances.EnqueueRebuild(username, name, image)
+	err := checkWriteAccess(r)
+	var job *models.Job
+	if err == nil {
+		job, err = s.Instances.EnqueueRebuild(username, name, image)
+	}
 	s.App.Activity.Record(username, "Rebuild instance", name, "from "+image, err)
 
 	if err != nil {
@@ -538,7 +674,10 @@ func (s *Server) handleInstanceLimits(w http.ResponseWriter, r *http.Request) {
 	memoryMB := atoiDefault(r.FormValue("memory_mb"), 0)
 	diskGB := atoiDefault(r.FormValue("disk_gb"), 0)
 
-	err := s.Instances.UpdateLimits(r.Context(), name, cpu, memoryMB, diskGB)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Instances.UpdateLimits(r.Context(), name, cpu, memoryMB, diskGB)
+	}
 	s.App.Activity.Record(username, "Update limits", name,
 		"cpu="+strconv.Itoa(cpu)+" mem="+strconv.Itoa(memoryMB)+"MB disk="+strconv.Itoa(diskGB)+"GB", err)
 
@@ -547,6 +686,11 @@ func (s *Server) handleInstanceLimits(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInstanceNotes(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+
+	if err := checkWriteAccess(r); err != nil {
+		s.fail(w, r, s.InstanceURL(name)+"?tab=settings", err)
+		return
+	}
 
 	meta, err := s.App.DB.GetInstanceMeta(name)
 	if err != nil {

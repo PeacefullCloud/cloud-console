@@ -3,7 +3,7 @@
        built with the dict helper because template invocation resets $. */ -}}
 {{define "instance_card"}}
 {{$inst := .Inst}}
-<article class="inst-card">
+<article class="inst-card" id="inst-card-{{$inst.Name}}">
   <div class="inst-top">
     <span class="os-icon {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
     <div class="inst-body">
@@ -26,23 +26,34 @@
         <div class="menu-pop">
           <a href="/instances/{{$inst.Name}}">Open instance</a>
           {{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">Open website</a>{{end}}
-          <form method="post" action="/instances/{{$inst.Name}}/state">
+          {{if canWrite .Role}}
+          <form method="post" action="/instances/{{$inst.Name}}/state"
+                hx-post="/instances/{{$inst.Name}}/state"
+                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                hx-disabled-elt="find button">
             <input type="hidden" name="csrf_token" value="{{.CSRF}}">
             <input type="hidden" name="action" value="restart">
             <button type="submit">Reboot</button>
           </form>
           {{if $inst.Running}}
-          <form method="post" action="/instances/{{$inst.Name}}/state">
+          <form method="post" action="/instances/{{$inst.Name}}/state"
+                hx-post="/instances/{{$inst.Name}}/state"
+                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                hx-disabled-elt="find button">
             <input type="hidden" name="csrf_token" value="{{.CSRF}}">
             <input type="hidden" name="action" value="stop">
             <button type="submit">Stop</button>
           </form>
           {{else}}
-          <form method="post" action="/instances/{{$inst.Name}}/state">
+          <form method="post" action="/instances/{{$inst.Name}}/state"
+                hx-post="/instances/{{$inst.Name}}/state"
+                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                hx-disabled-elt="find button">
             <input type="hidden" name="csrf_token" value="{{.CSRF}}">
             <input type="hidden" name="action" value="start">
             <button type="submit">Start</button>
           </form>
+          {{end}}
           {{end}}
           <a href="/instances/{{$inst.Name}}?tab=snapshots">Manage snapshots</a>
         </div>

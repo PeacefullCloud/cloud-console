@@ -8,8 +8,7 @@
     </div>
   </div>
 
-  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
-  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+  {{template "settings_flash" .}}
 
   <div class="split">
     <div class="split-main">
@@ -110,22 +109,17 @@ S3_USE_SSL=true</pre>
       <div class="card">
         <div class="card-head">
           <div class="grow"><div class="card-title">Console users</div></div>
-          <span class="muted small">{{len .Users}}</span>
+          <span class="muted small" id="users-count">{{len .Users}}</span>
         </div>
-        {{range .Users}}
-        <div class="snap-row" style="padding:9px 0">
-          <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;font-weight:700;font-size:12px">{{initials .Username}}</span>
-          <div class="grow">
-            <div class="snap-name" style="font-size:13px">{{.Username}}{{if eq .Username $.User.Username}} <span class="faint">(you)</span>{{end}}</div>
-            <div class="snap-meta">{{.Role}}{{if .LastLoginAt}} · last seen {{ago .LastLoginAt}}{{else}} · never signed in{{end}}</div>
-          </div>
-        </div>
-        {{end}}
+        {{template "users_list" .}}
 
+        {{if canAdmin .User}}
         <details class="disclosure">
           <summary>Add a user</summary>
           <div class="disclosure-body">
-            <form method="post" action="/settings/users">
+            <form method="post" action="/settings/users"
+                  hx-post="/settings/users" hx-target="#users-list" hx-swap="outerHTML"
+                  hx-disabled-elt="find button" hx-on::after-request="this.reset()">
               <input type="hidden" name="csrf_token" value="{{.CSRF}}">
               <div class="field">
                 <label for="new_username">Username</label>
@@ -147,11 +141,13 @@ S3_USE_SSL=true</pre>
             </form>
           </div>
         </details>
+        {{end}}
       </div>
 
       <div class="card">
         <div class="card-head"><div class="grow"><div class="card-title">Your password</div></div></div>
-        <form method="post" action="/settings/password">
+        <form method="post" action="/settings/password"
+              hx-post="/settings/password" hx-swap="none" hx-disabled-elt="find button">
           <input type="hidden" name="csrf_token" value="{{.CSRF}}">
           <div class="field">
             <label for="current_password">Current password</label>
@@ -165,58 +161,7 @@ S3_USE_SSL=true</pre>
         </form>
       </div>
 
-      <div class="card">
-        <div class="card-head">
-          <div class="grow"><div class="card-title">Two-factor authentication</div></div>
-          {{if .TOTPEnabled}}<span class="pill pill-ok">on</span>{{else}}<span class="pill">off</span>{{end}}
-        </div>
-        {{if .TOTPEnabled}}
-        <p class="muted small">Sign-in asks for a code from your authenticator app after the password.</p>
-        <form method="post" action="/settings/totp/disable">
-          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-          <div class="field">
-            <label for="totp_current_password">Confirm with your password to turn it off</label>
-            <input id="totp_current_password" name="current_password" type="password" required>
-          </div>
-          <button class="btn btn-block" type="submit">Turn off two-factor</button>
-        </form>
-        {{else if .TOTPSetupSecret}}
-        <p class="muted small">Scan this with your authenticator app (e.g. Google Authenticator, Authy, 1Password), then confirm with a code. Manual entry works too.</p>
-        {{if .TOTPSetupQR}}
-        <div style="display:grid;place-items:center;background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:16px">
-          <img src="{{safeURL .TOTPSetupQR}}" alt="Two-factor setup QR code" width="200" height="200">
-        </div>
-        {{end}}
-        <div class="field">
-          <label>Secret key (manual entry)</label>
-          <div class="copy-field">
-            <input type="text" readonly value="{{.TOTPSetupSecret}}" onclick="this.select()">
-            <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupSecret}}">Copy</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Setup address (manual entry)</label>
-          <div class="copy-field">
-            <input type="text" readonly value="{{.TOTPSetupURL}}" onclick="this.select()">
-            <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupURL}}">Copy</button>
-          </div>
-        </div>
-        <form method="post" action="/settings/totp/enable">
-          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-          <div class="field">
-            <label for="totp_code">6-digit code from your app</label>
-            <input id="totp_code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required placeholder="123456">
-          </div>
-          <button class="btn btn-primary btn-block" type="submit">Confirm and turn on</button>
-        </form>
-        {{else}}
-        <p class="muted small">Add a code from your authenticator app as a second step at sign-in.</p>
-        <form method="post" action="/settings/totp/setup">
-          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-          <button class="btn btn-block" type="submit">Set up two-factor</button>
-        </form>
-        {{end}}
-      </div>
+      {{template "totp_card" .}}
 
       <div class="card">
         <div class="card-head"><div class="grow"><div class="card-title">Session</div></div></div>

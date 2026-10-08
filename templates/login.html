@@ -7,6 +7,8 @@
 <title>Sign in · Peaceful Cloud Console</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
 </head>
 <body>
 <div class="login-page">
@@ -31,10 +33,12 @@
       <h1>Sign in</h1>
       <p class="muted small login-sub">Manage servers on this host.</p>
 
-      {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
-      {{if .Notice}}<div class="flash flash-info">{{.Notice}}</div>{{end}}
+      <div id="login-flash" aria-live="polite">
+        {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+        {{if .Notice}}<div class="flash flash-info">{{.Notice}}</div>{{end}}
+      </div>
 
-      <form method="post" action="/login">
+      <form method="post" action="/login" hx-post="/login" hx-swap="none" hx-disabled-elt="find button">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <input type="hidden" name="next" value="{{.Next}}">
         <div class="field">
@@ -67,6 +71,8 @@
 <title>Two-factor authentication · Peaceful Cloud Console</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
 </head>
 <body>
 <div class="login-page">
@@ -91,19 +97,11 @@
       <h1>Check your app</h1>
       <p class="muted small login-sub">Enter the 6-digit code for <strong>{{.Username}}</strong> from your authenticator app.</p>
 
-      {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+      <div id="login-flash" aria-live="polite">
+        {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+      </div>
 
-      <form method="post" action="/login/totp">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <input type="hidden" name="challenge" value="{{.Challenge}}">
-        <input type="hidden" name="next" value="{{.Next}}">
-        <div class="field">
-          <label for="code">Authentication code</label>
-          <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
-                 autocomplete="one-time-code" autofocus required placeholder="123456">
-        </div>
-        <button class="btn btn-primary btn-block" type="submit">Verify</button>
-      </form>
+      {{template "totp_form" .}}
 
       <p class="faint small login-foot">
         <a href="/login">Back to sign in</a>
@@ -113,4 +111,38 @@
 </div>
 </body>
 </html>
+{{end}}
+
+{{define "totp_form_inner"}}
+<input type="hidden" name="csrf_token" value="{{.CSRF}}">
+<input type="hidden" name="challenge" value="{{.Challenge}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<div class="field">
+  <label for="code">Authentication code</label>
+  <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+         autocomplete="one-time-code" autofocus required placeholder="123456">
+</div>
+<button class="btn btn-primary btn-block" type="submit">Verify</button>
+{{end}}
+
+{{define "totp_form"}}
+<form id="totp-form" method="post" action="/login/totp"
+      hx-post="/login/totp" hx-swap="none" hx-disabled-elt="find button">
+  {{template "totp_form_inner" .}}
+</form>
+{{end}}
+
+{{- /* Flash-only out-of-band swap for the sign-in form. */ -}}
+{{define "login_flash_oob"}}
+<div id="login-flash" hx-swap-oob="innerHTML:#login-flash" aria-live="polite">{{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="flash flash-info">{{.Notice}}</div>{{end}}</div>
+{{end}}
+
+{{- /* HTMX response to a wrong code: the form with a fresh challenge plus the
+       error flash, so retrying needs no reload. */ -}}
+{{define "totp_form_response"}}
+<form id="totp-form" hx-swap-oob="outerHTML:#totp-form" method="post" action="/login/totp"
+      hx-post="/login/totp" hx-swap="none" hx-disabled-elt="find button">
+  {{template "totp_form_inner" .}}
+</form>
+{{template "login_flash_oob" .}}
 {{end}}

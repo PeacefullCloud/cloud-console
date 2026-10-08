@@ -32,7 +32,10 @@ func (s *Server) handleDomainCreate(w http.ResponseWriter, r *http.Request) {
 	domain := strings.TrimSpace(r.FormValue("domain"))
 	port := atoiDefault(r.FormValue("port"), 80)
 
-	err := s.Domains.Add(r.Context(), name, domain, port)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Domains.Add(r.Context(), name, domain, port)
+	}
 	s.App.Activity.Record(username, "Add domain", name, domain, err)
 
 	s.finish(w, r, s.InstanceURL(name)+"?tab=domains", err, "Added "+domain+" to "+name+".")
@@ -43,7 +46,10 @@ func (s *Server) handleInstanceDomainDelete(w http.ResponseWriter, r *http.Reque
 	id := int64(atoiDefault(r.PathValue("id"), 0))
 	username := usernameOf(userFrom(r))
 
-	err := s.Domains.Delete(r.Context(), id)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Domains.Delete(r.Context(), id)
+	}
 	s.App.Activity.Record(username, "Remove domain", name, "", err)
 
 	s.finish(w, r, s.InstanceURL(name)+"?tab=domains", err, "Domain removed.")
@@ -59,7 +65,10 @@ func (s *Server) handleDomainDelete(w http.ResponseWriter, r *http.Request) {
 		label = row.Domain
 	}
 
-	err := s.Domains.Delete(r.Context(), id)
+	err := checkWriteAccess(r)
+	if err == nil {
+		err = s.Domains.Delete(r.Context(), id)
+	}
 	s.App.Activity.Record(username, "Remove domain", label, "", err)
 
 	s.finish(w, r, "/domains", err, "Removed "+label+".")
@@ -411,10 +420,101 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	role := r.FormValue("role")
 
+	if err := checkAdminAccess(r); err != nil {
+		s.App.Activity.Record(actor.Username, "Create user", username, role, err)
+		s.finish(w, r, "/settings", err, "")
+		return
+	}
+
 	err := s.createUser(username, password, role)
 	s.App.Activity.Record(actor.Username, "Create user", username, role, err)
 
+	if isHTMX(r) {
+		s.serveUsersFragments(w, r, err, "User "+username+" created.")
+		return
+	}
 	s.finish(w, r, "/settings", err, "User "+username+" created.")
+}
+
+// serveUsersFragments renders the HTMX response for user create/delete: the
+// fresh users list plus out-of-band swaps for the flash and the user count.
+func (s *Server) serveUsersFragments(w http.ResponseWriter, r *http.Request, actionErr error, notice string) {
+	data := usersFragmentData{CSRF: csrfFrom(r), User: userFrom(r)}
+	if actionErr != nil {
+		data.Error = friendlyError(actionErr)
+	} else {
+		data.Notice = notice
+	}
+
+	users, err := s.App.DB.ListUsers()
+	if err != nil {
+		data.Error = friendlyError(err)
+	} else {
+		data.Users = users
+	}
+
+	if err := s.Renderer.RenderPartial(w, "settings", "users_response", data); err != nil {
+		s.log.Error("render users list", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
+// handleUserDelete removes a console user. Only admins may delete users, and
+// safety rails protect the actor's own account and the last admin account.
+func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	actor := userFrom(r)
+	if actor == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	id := int64(atoiDefault(r.PathValue("id"), 0))
+	target, err := s.App.DB.GetUser(id)
+	var notice string
+	if err == nil {
+		if aerr := checkAdminAccess(r); aerr != nil {
+			err = aerr
+		} else if target.ID == actor.ID {
+			err = errors.New("you cannot delete your own account")
+		} else if target.Role == auth.RoleAdmin && s.adminCountExcept(target.ID) == 0 {
+			err = errors.New("cannot delete the last admin account")
+		} else {
+			// Sessions cascade on delete, but clear them explicitly in case
+			// foreign keys are ever disabled.
+			_ = s.App.DB.DeleteUserSessions(target.ID)
+			if derr := s.App.DB.DeleteUser(target.ID); derr != nil {
+				err = derr
+			} else {
+				notice = "User " + target.Username + " deleted."
+			}
+		}
+	}
+	label := ""
+	if target != nil {
+		label = target.Username
+	}
+	s.App.Activity.Record(actor.Username, "Delete user", label, "", err)
+
+	if isHTMX(r) {
+		s.serveUsersFragments(w, r, err, notice)
+		return
+	}
+	s.finish(w, r, "/settings", err, notice)
+}
+
+// adminCountExcept counts admin accounts other than the given id.
+func (s *Server) adminCountExcept(exceptID int64) int {
+	users, err := s.App.DB.ListUsers()
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, u := range users {
+		if u.Role == auth.RoleAdmin && u.ID != exceptID {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
@@ -431,14 +531,35 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	s.App.Activity.Record(user.Username, "Change password", user.Username, "", err)
 
 	if err != nil {
+		if isHTMX(r) {
+			s.serveSettingsFlash(w, err)
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 
-	// Changing the password invalidates every session, including this one.
+	// Changing the password invalidates every session, including this one,
+	// so the browser must sign in again.
 	s.clearCookie(w, sessionCookie)
 	s.setFlash(w, "ok", "Password changed. Please sign in again.")
+	if isHTMX(r) {
+		w.Header().Set("HX-Redirect", "/login")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// serveSettingsFlash renders a flash-only out-of-band swap for settings
+// forms that have no other fragment to refresh.
+func (s *Server) serveSettingsFlash(w http.ResponseWriter, actionErr error) {
+	data := usersFragmentData{CSRF: "", Error: friendlyError(actionErr)}
+	// Users and User stay empty: only the flash part of the response is used.
+	if err := s.Renderer.RenderPartial(w, "settings", "settings_flash_oob", data); err != nil {
+		s.log.Error("render settings flash", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 // handleTOTPSetup generates a fresh secret and shows it once for the user
@@ -452,15 +573,27 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 
 	secret, _, err := auth.GenerateTOTPSecret(user.Username)
 	if err != nil {
+		if isHTMX(r) {
+			s.serveSettingsFlash(w, err)
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 	if err := s.App.DB.SetTOTPSecret(user.ID, secret); err != nil {
+		if isHTMX(r) {
+			s.serveSettingsFlash(w, err)
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 
 	s.App.Activity.Record(user.Username, "Start two-factor setup", user.Username, "", nil)
+	if isHTMX(r) {
+		s.serveTOTPFragments(w, r, nil, "")
+		return
+	}
 	http.Redirect(w, r, "/settings?totp=setup", http.StatusSeeOther)
 }
 
@@ -475,23 +608,41 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 
 	fresh, err := s.App.DB.GetUser(user.ID)
 	if err != nil {
+		if isHTMX(r) {
+			s.serveSettingsFlash(w, err)
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 
 	code := strings.TrimSpace(r.FormValue("code"))
 	if !auth.VerifyTOTPCode(fresh.TOTPSecret, code) {
+		badCode := errors.New("incorrect code — try the current code from your app")
 		s.App.Activity.Record(user.Username, "Confirm two-factor", user.Username, "", errors.New("invalid code"))
-		s.fail(w, r, "/settings?totp=setup", errors.New("incorrect code — try the current code from your app"))
+		if isHTMX(r) {
+			// Keep showing the pending secret so the user can retry the code.
+			s.serveTOTPFragments(w, r, badCode, "")
+			return
+		}
+		s.fail(w, r, "/settings?totp=setup", badCode)
 		return
 	}
 
 	if err := s.App.DB.SetTOTPEnabled(user.ID, true); err != nil {
+		if isHTMX(r) {
+			s.serveTOTPFragments(w, r, err, "")
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 
 	s.App.Activity.Record(user.Username, "Enable two-factor", user.Username, "", nil)
+	if isHTMX(r) {
+		s.serveTOTPFragments(w, r, nil, "Two-factor authentication is on.")
+		return
+	}
 	s.succeed(w, r, "/settings", "Two-factor authentication is on.")
 }
 
@@ -506,22 +657,68 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 
 	fresh, err := s.App.DB.GetUser(user.ID)
 	if err != nil {
+		if isHTMX(r) {
+			s.serveSettingsFlash(w, err)
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 	if !auth.VerifyPassword(fresh.PasswordHash, r.FormValue("current_password")) {
+		badPassword := errors.New("incorrect password")
 		s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", auth.ErrInvalidCredentials)
-		s.fail(w, r, "/settings", errors.New("incorrect password"))
+		if isHTMX(r) {
+			s.serveTOTPFragments(w, r, badPassword, "")
+			return
+		}
+		s.fail(w, r, "/settings", badPassword)
 		return
 	}
 
 	if err := s.App.DB.ClearTOTP(user.ID); err != nil {
+		if isHTMX(r) {
+			s.serveTOTPFragments(w, r, err, "")
+			return
+		}
 		s.fail(w, r, "/settings", err)
 		return
 	}
 
 	s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", nil)
+	if isHTMX(r) {
+		s.serveTOTPFragments(w, r, nil, "Two-factor authentication is off.")
+		return
+	}
 	s.succeed(w, r, "/settings", "Two-factor authentication is off.")
+}
+
+// serveTOTPFragments renders the HTMX response for two-factor operations:
+// the fresh TOTP card plus an out-of-band flash. A pending (unconfirmed)
+// secret is shown again so a mistyped code can simply be retried.
+func (s *Server) serveTOTPFragments(w http.ResponseWriter, r *http.Request, actionErr error, notice string) {
+	user := userFrom(r)
+	data := totpFragmentData{CSRF: csrfFrom(r)}
+	if actionErr != nil {
+		data.Error = friendlyError(actionErr)
+	} else {
+		data.Notice = notice
+	}
+
+	if user != nil {
+		if fresh, err := s.App.DB.GetUser(user.ID); err == nil {
+			data.TOTPEnabled = fresh.TOTPEnabled
+			if !fresh.TOTPEnabled && fresh.TOTPSecret != "" {
+				data.TOTPSetupSecret = fresh.TOTPSecret
+				data.TOTPSetupURL = auth.ProvisioningURL(fresh.Username, fresh.TOTPSecret)
+				data.TOTPSetupQR = totpQRCode(data.TOTPSetupURL)
+			}
+		}
+	}
+
+	if err := s.Renderer.RenderPartial(w, "settings", "totp_response", data); err != nil {
+		s.log.Error("render totp card", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 // totpQRCode renders the setup URL as a scannable PNG data URI. An empty

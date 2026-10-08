@@ -1,0 +1,137 @@
+{{- /* Async lifecycle fragments for HTMX (AJAX) state changes.
+       instanceData is the context (.Inst + .CSRF + .Error/.Notice).
+       The full page (instance.html) renders instance_actions + instance_detail
+       inline, so the POST responses below stay in sync with what the user sees.
+       Responses carry hx-swap-oob swaps: with hx-swap="none" on the forms the
+       main body is ignored and only the out-of-band targets update, so the
+       page never fully reloads. */ -}}
+
+{{define "instance_actions_inner"}}
+{{$inst := .Inst}}
+{{if canWrite .User}}
+<form method="post" action="/instances/{{$inst.Name}}/delete"
+      hx-post="/instances/{{$inst.Name}}/delete" hx-swap="none" hx-disabled-elt="find button"
+      hx-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone."
+      data-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone.">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <button class="btn btn-outline btn-danger" type="submit">Delete</button>
+</form>
+<form method="post" action="/instances/{{$inst.Name}}/state"
+      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="action" value="restart">
+  <button class="btn btn-outline" type="submit">Reboot</button>
+</form>
+{{if $inst.Running}}
+<form method="post" action="/instances/{{$inst.Name}}/state"
+      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="action" value="stop">
+  <button class="btn btn-outline" type="submit">Stop</button>
+</form>
+{{else}}
+<form method="post" action="/instances/{{$inst.Name}}/state"
+      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="action" value="start">
+  <button class="btn btn-outline" type="submit">Start</button>
+</form>
+{{end}}
+{{else}}
+{{template "read_only_note" .}}
+{{end}}
+{{end}}
+
+{{define "read_only_note"}}
+<p class="hint" style="margin:0">You have read-only access — ask an admin to make changes.</p>
+{{end}}
+
+{{define "instance_actions"}}
+<div id="instance-actions" class="page-actions">{{template "instance_actions_inner" .}}</div>
+{{end}}
+
+{{define "instance_detail_inner"}}
+{{$inst := .Inst}}
+<div class="detail-col">
+  <div class="detail-brand">
+    <span class="os-icon lg {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
+    <div>
+      <h2>{{if $inst.Tracked}}{{$inst.ImageLabel}}{{else}}{{title $inst.Kind}}{{end}}</h2>
+      <span class="muted small mono">{{$inst.Name}}</span>
+    </div>
+  </div>
+  <dl class="kv" style="margin-top:16px">
+    <dt>Instance type</dt>
+    <dd>{{title $inst.Kind}}{{if $inst.Tracked}} · {{$inst.ImageLabel}}{{end}}</dd>
+    {{if $inst.Owner}}<dt>Owner</dt><dd>{{$inst.Owner}}</dd>{{end}}
+  </dl>
+</div>
+
+<div class="detail-col">
+  <dl class="kv">
+    <dt>Storage pool</dt>
+    <dd class="strong">{{if $inst.StoragePool}}{{$inst.StoragePool}}{{else}}—{{end}}</dd>
+    <dt>Image</dt>
+    <dd class="mono">{{if $inst.Image}}{{$inst.Image}}{{else}}unknown{{end}}</dd>
+    <dt>Created</dt>
+    <dd>{{date $inst.CreatedAt}}</dd>
+  </dl>
+</div>
+
+<div class="detail-col">
+  <dl class="kv">
+    <dt>Private IPv4 address</dt>
+    <dd class="strong mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</dd>
+    {{if gt (len $inst.IPs) 1}}
+    <dt>Other addresses</dt>
+    <dd class="mono">{{range $i, $a := $inst.IPs}}{{if ne $a $inst.IP}}{{$a}} {{end}}{{end}}</dd>
+    {{end}}
+    <dt>Primary domain</dt>
+    <dd>{{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">{{$inst.PrimaryHost}}</a>{{else}}<span class="faint">none</span>{{end}}</dd>
+  </dl>
+</div>
+
+<div class="detail-col">
+  <dl class="kv">
+    <dt>Instance status</dt>
+    <dd><span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span></dd>
+    {{if $inst.Running}}
+    <dt>Uptime</dt>
+    <dd>{{duration $inst.Uptime}}</dd>
+    {{end}}
+    <dt>Processes</dt>
+    <dd>{{$inst.Processes}}</dd>
+  </dl>
+</div>
+{{end}}
+
+{{define "instance_detail"}}
+<div id="instance-detail" class="detail-card" style="margin-top:18px">{{template "instance_detail_inner" .}}</div>
+{{end}}
+
+{{define "flash_wrap"}}
+<div id="flash-wrap" aria-live="polite">{{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}</div>
+{{end}}
+
+{{- /* Flash-only out-of-band swap, for failures where the instance itself
+       could not be re-read (so there is nothing fresh to render). */ -}}
+{{define "flash_oob"}}
+<div id="flash-wrap" hx-swap-oob="innerHTML:#flash-wrap" aria-live="polite">{{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}{{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}</div>
+{{end}}
+
+{{- /* Out-of-band refresh of the detail page regions after a state change. */ -}}
+{{define "instance_fragments"}}
+{{template "flash_oob" .}}
+<div id="instance-actions" hx-swap-oob="outerHTML:#instance-actions" class="page-actions">{{template "instance_actions_inner" .}}</div>
+<div id="instance-detail" hx-swap-oob="outerHTML:#instance-detail" class="detail-card" style="margin-top:18px">{{template "instance_detail_inner" .}}</div>
+{{end}}
+
+{{- /* Full HTMX response to POST …/state. The main body is the fresh instance
+       card so list-page forms (hx-target="#inst-card-NAME", hx-swap="outerHTML")
+       swap in place; the OOB fragments update the detail page regions when the
+       request came from there (missing targets are ignored by HTMX). Detail
+       page forms use hx-swap="none" so only the OOB parts apply. */ -}}
+{{define "instance_state_response"}}
+{{template "instance_card" (dict "Inst" .Inst "CSRF" .CSRF "Role" .User.Role)}}
+{{template "instance_fragments" .}}
+{{end}}

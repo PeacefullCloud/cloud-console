@@ -13,7 +13,7 @@
     </div>
     <div class="page-actions">
       <a class="btn btn-outline" href="/instances">View instances</a>
-      <a class="btn btn-primary" href="/create">Create instance</a>
+      {{if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
     </div>
   </div>
 
@@ -89,7 +89,7 @@
           <div class="empty">
             <h3>No instances yet</h3>
             <p>Create your first Incus instance to get started.</p>
-            <a class="btn btn-primary" href="/create">Create instance</a>
+            {{if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
           </div>
         {{end}}
       </div>

@@ -891,6 +891,12 @@ details.disclosure .disclosure-body { padding: 0 16px 16px; }
 .flash-warn { background: var(--amber-bg); border-color: #f0d5a8; color: #7a4305; }
 .flash-info { background: var(--blue-050); border-color: var(--blue-100); color: var(--blue-800); }
 
+/* Async lifecycle actions (HTMX): the page updates in place, so keep the
+   layout stable while a request is in flight. */
+#flash-wrap:empty { display: none; }
+.inst-card.htmx-request { opacity: .65; }
+form.htmx-request button[type="submit"] { cursor: wait; }
+
 /* ---------- Login ------------------------------------------------------ */
 
 .login-page {
@@ -1063,6 +1069,38 @@ details.menu[open] > summary { background: var(--blue-050); color: var(--blue-70
 }
 .menu-pop form { margin: 0; }
 .menu-pop form + a, .menu-pop a + form { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+.menu-head {
+  padding: 8px 11px 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+.menu-head strong { color: var(--text); }
+
+/* Account menu in the top bar: a chip that opens the menu above instead of
+   submitting anything itself. (Specificity beats `details.menu > summary`.) */
+.topnav details.menu { margin: 0; }
+details.menu > summary.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+details.menu > summary.user-chip::marker { content: ""; }
+details.menu > summary.user-chip:hover { background: var(--blue-050); color: var(--blue-700); }
+details.menu[open] > summary.user-chip { background: var(--blue-050); color: var(--blue-700); }
 
 /* Collapsed sidebar on desktop: hamburger hides the white column. */
 body.sidebar-collapsed .shell {

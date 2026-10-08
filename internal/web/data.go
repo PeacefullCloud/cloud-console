@@ -323,6 +323,29 @@ type jobsData struct {
 	Jobs []models.Job
 }
 
+// usersFragmentData is the HTMX context for the console-users list: the
+// rows, the flash message and the user count travel together so one response
+// refreshes the whole card without a reload.
+type usersFragmentData struct {
+	CSRF   string
+	User   *models.User
+	Users  []models.User
+	Error  string
+	Notice string
+}
+
+// totpFragmentData is the HTMX context for the two-factor card.
+type totpFragmentData struct {
+	CSRF   string
+	Error  string
+	Notice string
+
+	TOTPEnabled     bool
+	TOTPSetupSecret string
+	TOTPSetupURL    string
+	TOTPSetupQR     string
+}
+
 type loginData struct {
 	Title    string
 	CSRF     string
@@ -338,6 +361,7 @@ type totpData struct {
 	Title     string
 	CSRF      string
 	Error     string
+	Notice    string
 	Challenge string
 	Username  string
 	Next      string

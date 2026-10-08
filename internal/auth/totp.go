@@ -118,6 +118,19 @@ func (s *Service) FinishTOTPChallenge(id string) (int64, bool) {
 	return consumeTOTPChallenge(id)
 }
 
+// PeekTOTPChallenge resolves a challenge id without consuming it, so the
+// code form can live at its own URL.
+func (s *Service) PeekTOTPChallenge(id string) (int64, bool) {
+	totpChallenges.Lock()
+	defer totpChallenges.Unlock()
+
+	ch, ok := totpChallenges.items[id]
+	if !ok || time.Now().After(ch.expires) {
+		return 0, false
+	}
+	return ch.userID, true
+}
+
 // OpenSession creates a session for an already-authenticated user (used after
 // the second factor succeeds).
 func (s *Service) OpenSession(user *models.User, ip, userAgent string) (string, error) {

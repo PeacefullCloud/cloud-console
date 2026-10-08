@@ -1,5 +1,8 @@
 {{define "tab_settings"}}
 {{$inst := .Inst}}
+{{if not (canWrite .User)}}
+<div class="card">{{template "read_only_note" .}}</div>
+{{end}}
 <div class="split">
   <div class="split-main">
     <div class="card">
@@ -10,6 +13,7 @@
         </div>
       </div>
 
+      {{if canWrite .User}}
       <form method="post" action="/instances/{{$inst.Name}}/limits">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <div class="field-row">
@@ -31,6 +35,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Apply changes</button>
       </form>
+      {{end}}
     </div>
 
     <div class="card">
@@ -40,11 +45,13 @@
           <p class="card-sub">Domains and console metadata follow the new name.</p>
         </div>
       </div>
+      {{if canWrite .User}}
       <form method="post" action="/instances/{{$inst.Name}}/rename" class="row-wrap">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <input type="text" name="name" value="{{$inst.Name}}" required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" style="flex:1 1 240px">
         <button class="btn" type="submit">Rename</button>
       </form>
+      {{end}}
     </div>
 
     <div class="card">
@@ -54,6 +61,7 @@
           <p class="card-sub">Replaces the root filesystem with a fresh image, keeping the name, limits and domains. All data inside is lost.</p>
         </div>
       </div>
+      {{if canWrite .User}}
       <form method="post" action="/instances/{{$inst.Name}}/rebuild" class="row-wrap"
             data-confirm="Rebuild {{$inst.Name}}? Everything inside the instance is destroyed.">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
@@ -62,17 +70,22 @@
         </select>
         <button class="btn" type="submit">Rebuild</button>
       </form>
+      {{end}}
     </div>
   </div>
 
   <div class="split-side">
     <div class="card">
       <div class="card-head"><div class="grow"><div class="card-title">Notes</div></div></div>
+      {{if canWrite .User}}
       <form method="post" action="/instances/{{$inst.Name}}/notes">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <textarea name="notes" rows="4" placeholder="What runs here?">{{$inst.Notes}}</textarea>
         <button class="btn btn-sm mt-8" type="submit">Save notes</button>
       </form>
+      {{else if $inst.Notes}}
+      <p class="muted small" style="margin:0">{{$inst.Notes}}</p>
+      {{end}}
     </div>
 
     <div class="card">
@@ -89,11 +102,15 @@
     <div class="card">
       <div class="card-head"><div class="grow"><div class="card-title">Danger zone</div></div></div>
       <p class="muted small">Deleting removes the instance, its snapshots and its local backups. This cannot be undone.</p>
+      {{if canWrite .User}}
       <form method="post" action="/instances/{{$inst.Name}}/delete"
+            hx-post="/instances/{{$inst.Name}}/delete" hx-swap="none" hx-disabled-elt="find button"
+            hx-confirm="Delete {{$inst.Name}} permanently?"
             data-confirm="Delete {{$inst.Name}} permanently?">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <button class="btn btn-danger btn-block" type="submit">Delete instance</button>
       </form>
+      {{end}}
     </div>
   </div>
 </div>

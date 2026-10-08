@@ -14,7 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/peaceful/cloud-console/internal/auth"
 	"github.com/peaceful/cloud-console/internal/incus"
+	"github.com/peaceful/cloud-console/internal/models"
 )
 
 // Renderer parses one template set per page.
@@ -209,6 +211,11 @@ func (r *Renderer) funcMap() template.FuncMap {
 		"greeting":        greeting,
 		"dict":            dict,
 		"safeURL":         func(s string) template.URL { return template.URL(s) },
+		// canWrite/canAdmin gate mutating UI by role. They accept a
+		// *models.User, a role string, or anything else (unknown and
+		// missing values deny access, so viewers never see admin UI).
+		"canWrite": func(v any) bool { return auth.CanWrite(roleName(v)) },
+		"canAdmin": func(v any) bool { return auth.CanAdmin(roleName(v)) },
 	}
 }
 
@@ -228,6 +235,25 @@ func dict(values ...any) (map[string]any, error) {
 		out[key] = values[i+1]
 	}
 	return out, nil
+}
+
+// roleName extracts a role string from a *models.User, a models.User, a
+// plain role string, or anything else. Unknown and missing values yield an
+// empty role, which CanWrite/CanAdmin both reject.
+func roleName(v any) string {
+	switch t := v.(type) {
+	case *models.User:
+		if t == nil {
+			return ""
+		}
+		return t.Role
+	case models.User:
+		return t.Role
+	case string:
+		return t
+	default:
+		return ""
+	}
 }
 
 // --- template helpers -----------------------------------------------------

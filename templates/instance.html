@@ -12,90 +12,14 @@
         {{if $inst.StoragePool}} · <a href="/storage">{{$inst.StoragePool}}</a>{{end}}
       </p>
     </div>
-    <div class="page-actions">
-      <form method="post" action="/instances/{{$inst.Name}}/delete" data-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone.">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <button class="btn btn-outline btn-danger" type="submit">Delete</button>
-      </form>
-      <form method="post" action="/instances/{{$inst.Name}}/state">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <input type="hidden" name="action" value="restart">
-        <button class="btn btn-outline" type="submit">Reboot</button>
-      </form>
-      {{if $inst.Running}}
-      <form method="post" action="/instances/{{$inst.Name}}/state">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <input type="hidden" name="action" value="stop">
-        <button class="btn btn-outline" type="submit">Stop</button>
-      </form>
-      {{else}}
-      <form method="post" action="/instances/{{$inst.Name}}/state">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <input type="hidden" name="action" value="start">
-        <button class="btn btn-outline" type="submit">Start</button>
-      </form>
-      {{end}}
-    </div>
+    {{template "instance_actions" .}}
   </div>
 
-  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
-  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+  {{template "flash_wrap" .}}
 
   {{template "job_list" .}}
 
-  <div class="detail-card" style="margin-top:18px">
-    <div class="detail-col">
-      <div class="detail-brand">
-        <span class="os-icon lg {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
-        <div>
-          <h2>{{if $inst.Tracked}}{{$inst.ImageLabel}}{{else}}{{title $inst.Kind}}{{end}}</h2>
-          <span class="muted small mono">{{$inst.Name}}</span>
-        </div>
-      </div>
-      <dl class="kv" style="margin-top:16px">
-        <dt>Instance type</dt>
-        <dd>{{title $inst.Kind}}{{if $inst.Tracked}} · {{$inst.ImageLabel}}{{end}}</dd>
-        {{if $inst.Owner}}<dt>Owner</dt><dd>{{$inst.Owner}}</dd>{{end}}
-      </dl>
-    </div>
-
-    <div class="detail-col">
-      <dl class="kv">
-        <dt>Storage pool</dt>
-        <dd class="strong">{{if $inst.StoragePool}}{{$inst.StoragePool}}{{else}}—{{end}}</dd>
-        <dt>Image</dt>
-        <dd class="mono">{{if $inst.Image}}{{$inst.Image}}{{else}}unknown{{end}}</dd>
-        <dt>Created</dt>
-        <dd>{{date $inst.CreatedAt}}</dd>
-      </dl>
-    </div>
-
-    <div class="detail-col">
-      <dl class="kv">
-        <dt>Private IPv4 address</dt>
-        <dd class="strong mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</dd>
-        {{if gt (len $inst.IPs) 1}}
-        <dt>Other addresses</dt>
-        <dd class="mono">{{range $i, $a := $inst.IPs}}{{if ne $a $inst.IP}}{{$a}} {{end}}{{end}}</dd>
-        {{end}}
-        <dt>Primary domain</dt>
-        <dd>{{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">{{$inst.PrimaryHost}}</a>{{else}}<span class="faint">none</span>{{end}}</dd>
-      </dl>
-    </div>
-
-    <div class="detail-col">
-      <dl class="kv">
-        <dt>Instance status</dt>
-        <dd><span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span></dd>
-        {{if $inst.Running}}
-        <dt>Uptime</dt>
-        <dd>{{duration $inst.Uptime}}</dd>
-        {{end}}
-        <dt>Processes</dt>
-        <dd>{{$inst.Processes}}</dd>
-      </dl>
-    </div>
-  </div>
+  {{template "instance_detail" .}}
 
   <div class="tabs">
     {{$name := $inst.Name}}
