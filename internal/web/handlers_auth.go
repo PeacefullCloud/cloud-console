@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/peaceful/cloud-console/internal/auth"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -17,11 +18,16 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	kind, message := s.takeFlash(w, r)
+	providers, err := s.SSO.PublicProviders()
+	if err != nil {
+		s.log.Warn("could not list sso providers", "err", err)
+	}
 	data := loginData{
-		Title:  "Sign in",
-		CSRF:   csrfFrom(r),
-		Next:   safeNext(r.URL.Query().Get("next")),
-		Notice: message,
+		Title:     "Sign in",
+		CSRF:      csrfFrom(r),
+		Next:      safeNext(r.URL.Query().Get("next")),
+		Notice:    message,
+		Providers: providers,
 	}
 	if kind == "err" {
 		data.Error = message
@@ -100,6 +106,19 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.App.Activity.Record(user.Username, "Sign in", "", "from "+clientIP(r), nil)
+	if !sso.PasswordAllowed(user.AuthMethod) {
+		// The session was already created above; close it so the denial
+		// does not leave a usable session behind.
+		_ = s.App.Auth.Logout(token)
+		s.App.Activity.Record(user.Username, "Sign in", "", "account uses single sign-on", errors.New("password sign-in disabled"))
+		if isHTMX(r) {
+			s.serveLoginFlash(w, "This account uses single sign-on — use a sign-in button below.")
+			return
+		}
+		s.setFlash(w, "err", "This account uses single sign-on — use a sign-in button below.")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	if isHTMX(r) {
 		s.setSessionCookie(w, token)
 		target := next
@@ -247,6 +266,19 @@ func (s *Server) handleLoginTOTPSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "from "+clientIP(r), nil)
+	if !sso.PasswordAllowed(user.AuthMethod) {
+		// Closed the loop opened at the password step: SSO-only accounts
+		// cannot finish a password sign-in even with a valid TOTP code.
+		_ = s.App.Auth.Logout(token)
+		s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "account uses single sign-on", errors.New("password sign-in disabled"))
+		if isHTMX(r) {
+			s.serveLoginFlash(w, "This account uses single sign-on — use a sign-in button below.")
+			return
+		}
+		s.setFlash(w, "err", "This account uses single sign-on — use a sign-in button below.")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	if isHTMX(r) {
 		s.setSessionCookie(w, token)
 		target := next

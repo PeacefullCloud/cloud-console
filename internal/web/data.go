@@ -13,6 +13,7 @@ import (
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/monitoring"
 	"github.com/peaceful/cloud-console/internal/snapshots"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 // baseData carries the fields every layout-rendered page needs.
@@ -317,6 +318,15 @@ type settingsData struct {
 
 	IncusProject string
 	RunningCount int
+
+	// SSO providers for the Settings card, plus each user's linked
+	// identities (user id → provider names) for the users list.
+	Providers []sso.ProviderView
+	Links     map[int64][]string
+
+	// SSOKeySet reports whether CONSOLE_SSO_KEY is configured, gating the
+	// client-secret field in the provider form.
+	SSOKeySet bool
 }
 
 type jobsData struct {
@@ -330,8 +340,20 @@ type usersFragmentData struct {
 	CSRF   string
 	User   *models.User
 	Users  []models.User
+	Links  map[int64][]string
 	Error  string
 	Notice string
+}
+
+// ssoFragmentData is the HTMX context for the sign-in-methods card: the
+// provider list plus an out-of-band flash.
+type ssoFragmentData struct {
+	CSRF      string
+	User      *models.User
+	Providers []sso.ProviderView
+	SSOKeySet bool
+	Error     string
+	Notice    string
 }
 
 // totpFragmentData is the HTMX context for the two-factor card.
@@ -353,6 +375,9 @@ type loginData struct {
 	Notice   string
 	Next     string
 	Username string
+
+	// Enabled SSO providers, rendered as sign-in buttons.
+	Providers []sso.ProviderView
 }
 
 // totpData is the second login step: the password was correct and the user

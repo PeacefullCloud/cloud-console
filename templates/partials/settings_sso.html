@@ -1,0 +1,115 @@
+{{- /* Single sign-on fragments for HTMX (AJAX) provider operations.
+       The provider list refreshes #sso-list-wrap in place; flash feedback
+       travels in #settings-flash out-of-band. Context: ssoFragmentData for
+       sso_response, settingsData for sso_card. */ -}}
+
+{{define "sso_card"}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Single sign-on</div>
+      <p class="card-sub">Google, Microsoft, Keycloak or any OpenID provider.</p>
+    </div>
+  </div>
+  {{if not .SSOKeySet}}
+  <div class="flash flash-warn">Set CONSOLE_SSO_KEY and restart the console before saving a client secret.</div>
+  {{end}}
+  <p class="hint">After adding a provider, register its callback URL at the provider exactly as shown below.</p>
+  {{template "sso_list" .}}
+  <details class="disclosure">
+    <summary>Add a sign-in method</summary>
+    <div class="disclosure-body">{{template "sso_form" (dict "PV" ssoBlank "CSRF" .CSRF)}}</div>
+  </details>
+</div>
+{{end}}
+
+{{define "sso_list"}}
+<div id="sso-list-wrap">
+  {{if .Providers}}
+  {{range .Providers}}
+  <div class="snap-row" style="padding:9px 0">
+    <div class="grow">
+      <div class="snap-name" style="font-size:13px">{{.Name}}
+        {{if .Enabled}}{{else}} <span class="pill">disabled</span>{{end}}
+        {{if .RequireMFA}} <span class="pill pill-info" title="Sign-ins without a multi-factor claim are rejected">MFA</span>{{end}}
+      </div>
+      <div class="snap-meta">{{.Issuer}}</div>
+      <div class="snap-meta mono" style="word-break:break-all">callback {{.CallbackURL}}</div>
+      <div class="snap-meta">new accounts join as {{.DefaultRole}}{{if not .HasSecret}} · <span style="color:var(--red)">missing secret</span>{{end}}</div>
+    </div>
+    <div class="row-tight">
+      <form method="post" action="/settings/sso/{{.ID}}/toggle"
+            hx-post="/settings/sso/{{.ID}}/toggle" hx-target="#sso-list-wrap" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <button class="btn btn-sm" type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
+      </form>
+      <form method="post" action="/settings/sso/{{.ID}}/delete"
+            hx-post="/settings/sso/{{.ID}}/delete" hx-target="#sso-list-wrap" hx-swap="outerHTML" hx-disabled-elt="find button"
+            hx-confirm="Delete the {{.Name}} sign-in method?"
+            data-confirm="Delete the {{.Name}} sign-in method?">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+      </form>
+    </div>
+  </div>
+  <details class="disclosure">
+    <summary>Edit {{.Name}}</summary>
+    <div class="disclosure-body">{{template "sso_form" (dict "PV" . "CSRF" $.CSRF)}}</div>
+  </details>
+  {{end}}
+  {{else}}
+  <p class="muted small">No sign-in methods yet.</p>
+  {{end}}
+</div>
+{{end}}
+
+{{- /* Provider add/edit form. PV is a ProviderView, blank for new entries. */ -}}
+{{define "sso_form"}}
+{{$pv := .PV}}
+<form method="post" action="/settings/sso"
+      hx-post="/settings/sso" hx-target="#sso-list-wrap" hx-swap="outerHTML" hx-disabled-elt="find button">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  {{if $pv.ID}}<input type="hidden" name="id" value="{{$pv.ID}}">{{end}}
+  <div class="field">
+    <label>Name</label>
+    <input name="name" type="text" required minlength="2" maxlength="64" value="{{$pv.Name}}" placeholder="Google Workspace">
+  </div>
+  <div class="field">
+    <label>Issuer URL</label>
+    <input name="issuer" type="url" required value="{{$pv.Issuer}}" placeholder="https://accounts.google.com">
+    <p class="hint">The provider's OpenID issuer, exactly as documented.</p>
+  </div>
+  <div class="field">
+    <label>Client ID</label>
+    <input name="client_id" type="text" required value="{{$pv.ClientID}}">
+  </div>
+  <div class="field">
+    <label>Client secret</label>
+    <input name="client_secret" type="password" autocomplete="off" {{if eq $pv.ID 0}}required{{end}}
+           placeholder="{{if eq $pv.ID 0}}from the provider app registration{{else}}leave blank to keep the stored secret{{end}}">
+  </div>
+  <div class="field">
+    <label>Button label (optional)</label>
+    <input name="button_label" type="text" maxlength="64" value="{{$pv.ButtonLabel}}" placeholder="Google">
+  </div>
+  <div class="field">
+    <label>Role for new accounts</label>
+    <select name="default_role">
+      <option value="viewer" {{if eq $pv.DefaultRole "viewer"}}selected{{end}}>Viewer — read only</option>
+      <option value="operator" {{if eq $pv.DefaultRole "operator"}}selected{{end}}>Operator — manage instances</option>
+      <option value="admin" {{if eq $pv.DefaultRole "admin"}}selected{{end}}>Admin — full access</option>
+    </select>
+  </div>
+  <label class="checkline"><input type="checkbox" name="require_mfa" value="1" {{if $pv.RequireMFA}}checked{{end}}> Require multi-factor at the provider</label>
+  {{if $pv.ID}}
+  <label class="checkline mt-8"><input type="checkbox" name="enabled" value="1" {{if $pv.Enabled}}checked{{end}}> Enabled</label>
+  {{end}}
+  <button class="btn btn-primary btn-block mt-16" type="submit">{{if $pv.ID}}Save changes{{else}}Add sign-in method{{end}}</button>
+</form>
+{{end}}
+
+{{- /* Full HTMX response to provider save/delete/toggle. */ -}}
+{{define "sso_response"}}
+{{template "sso_list" .}}
+{{template "settings_flash_oob" .}}
+{{end}}

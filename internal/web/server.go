@@ -20,6 +20,7 @@ import (
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/monitoring"
 	"github.com/peaceful/cloud-console/internal/snapshots"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 const (
@@ -38,6 +39,7 @@ type Deps struct {
 	Snapshots  *snapshots.Service
 	Backups    *backups.Service
 	Monitoring *monitoring.Service
+	SSO        *sso.Service
 
 	Version string
 	Dev     bool
@@ -93,6 +95,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /login", s.handleLoginSubmit)
 	m.HandleFunc("GET /login/totp", s.handleTOTPPage)
 	m.HandleFunc("POST /login/totp", s.handleLoginTOTPSubmit)
+	m.HandleFunc("GET /auth/sso/start/{provider}", s.handleSSOStart)
+	m.HandleFunc("GET /auth/sso/callback/{provider}", s.handleSSOCallback)
 	m.HandleFunc("POST /logout", s.handleLogout)
 
 	m.HandleFunc("GET /instances", s.handleInstances)
@@ -134,6 +138,11 @@ func (s *Server) routes() {
 
 	m.HandleFunc("POST /settings/users", s.handleUserCreate)
 	m.HandleFunc("POST /settings/users/{id}/delete", s.handleUserDelete)
+	m.HandleFunc("POST /settings/users/{id}/method", s.handleUserMethod)
+	m.HandleFunc("POST /settings/users/{id}/totp/clear", s.handleUserTOTPClear)
+	m.HandleFunc("POST /settings/sso", s.handleProviderSave)
+	m.HandleFunc("POST /settings/sso/{id}/delete", s.handleProviderDelete)
+	m.HandleFunc("POST /settings/sso/{id}/toggle", s.handleProviderToggle)
 	m.HandleFunc("POST /settings/password", s.handlePasswordChange)
 	m.HandleFunc("POST /settings/totp/setup", s.handleTOTPSetup)
 	m.HandleFunc("POST /settings/totp/enable", s.handleTOTPEnable)
@@ -188,6 +197,13 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 
 		if public[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// SSO sign-in endpoints are unauthenticated by design: the state
+		// token and PKCE exchange authenticate the callback instead.
+		if strings.HasPrefix(r.URL.Path, "/auth/sso/") {
 			next.ServeHTTP(w, r)
 			return
 		}

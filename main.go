@@ -34,6 +34,7 @@ import (
 	"github.com/peaceful/cloud-console/internal/jobs"
 	"github.com/peaceful/cloud-console/internal/monitoring"
 	"github.com/peaceful/cloud-console/internal/snapshots"
+	"github.com/peaceful/cloud-console/internal/sso"
 	"github.com/peaceful/cloud-console/internal/web"
 )
 
@@ -149,6 +150,7 @@ func run() error {
 	snapshotsService := snapshots.New(app)
 	backupsService := backups.New(app)
 	monitoringService := monitoring.New(app)
+	ssoService := sso.New(db, cfg, log)
 
 	// Caddy is re-rendered whenever instances or domains change.
 	instancesService.SetNotifier(domainsService)
@@ -179,6 +181,7 @@ func run() error {
 		Snapshots:  snapshotsService,
 		Backups:    backupsService,
 		Monitoring: monitoringService,
+		SSO:        ssoService,
 		Version:    version,
 		Dev:        *dev,
 	})

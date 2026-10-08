@@ -3,6 +3,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +49,11 @@ type Config struct {
 	// Bootstrap
 	AdminUser     string
 	AdminPassword string
+
+	// SSOKey encrypts OIDC client secrets at rest. It is derived from
+	// CONSOLE_SSO_KEY: 64 hex characters (32 bytes) or any passphrase
+	// (SHA-256). Empty means provider secrets cannot be saved.
+	SSOKey []byte
 
 	// Behaviour
 	MetricsIntervalSeconds int
@@ -97,6 +104,8 @@ func Load() (*Config, error) {
 		AdminUser:     env("CONSOLE_ADMIN_USER", "admin"),
 		AdminPassword: env("CONSOLE_ADMIN_PASSWORD", ""),
 
+		SSOKey: ssoKey(env("CONSOLE_SSO_KEY", "")),
+
 		MetricsIntervalSeconds: envInt("CONSOLE_METRICS_INTERVAL", 60),
 		MetricsRetentionHours:  envInt("CONSOLE_METRICS_RETENTION_HOURS", 24*7),
 		MaxInstances:           envInt("CONSOLE_MAX_INSTANCES", 100),
@@ -129,6 +138,23 @@ func (c *Config) S3Configured() bool {
 // CaddyConfigured reports whether the console should manage a Caddyfile.
 func (c *Config) CaddyConfigured() bool {
 	return c.CaddyConfigPath != "" || c.CaddyAdminURL != ""
+}
+
+// SSOKeySet reports whether OIDC client-secret encryption is available.
+func (c *Config) SSOKeySet() bool { return len(c.SSOKey) == 32 }
+
+// ssoKey derives a 32-byte encryption key from CONSOLE_SSO_KEY: 64 hex
+// characters are used directly, any other non-empty value is SHA-256 hashed.
+func ssoKey(raw string) []byte {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return decoded
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return sum[:]
 }
 
 func env(key, def string) string {

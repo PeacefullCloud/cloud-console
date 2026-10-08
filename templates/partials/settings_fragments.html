@@ -31,7 +31,31 @@
     <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;font-weight:700;font-size:12px">{{initials .Username}}</span>
     <div class="grow">
       <div class="snap-name" style="font-size:13px">{{.Username}}{{if eq .Username $.User.Username}} <span class="faint">(you)</span>{{end}}</div>
-      <div class="snap-meta">{{.Role}}{{if .LastLoginAt}} · last seen {{ago .LastLoginAt}}{{else}} · never signed in{{end}}</div>
+      <div class="snap-meta">{{.Role}} · sign-in: {{authMethod .AuthMethod}}{{if .LastLoginAt}} · last seen {{ago .LastLoginAt}}{{else}} · never signed in{{end}}</div>
+      {{with index $.Links .ID}}<div class="snap-meta">Single sign-on: {{join . ", "}}</div>{{end}}
+      {{if canAdmin $.User}}
+      <div class="row-tight" style="margin-top:6px">
+        <form method="post" action="/settings/users/{{.ID}}/method"
+              hx-post="/settings/users/{{.ID}}/method" hx-target="#users-list" hx-swap="outerHTML"
+              hx-disabled-elt="find button" hx-trigger="change from:select" title="Who may use which sign-in">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <select name="method" class="btn btn-sm" style="height:auto">
+            <option value="either" {{if or (eq .AuthMethod "either") (eq .AuthMethod "")}}selected{{end}}>Password or SSO</option>
+            <option value="password" {{if eq .AuthMethod "password"}}selected{{end}}>Password only</option>
+            <option value="sso" {{if eq .AuthMethod "sso"}}selected{{end}}>SSO only</option>
+          </select>
+        </form>
+        {{if and .TOTPEnabled (ne .ID $.User.ID)}}
+        <form method="post" action="/settings/users/{{.ID}}/totp/clear"
+              hx-post="/settings/users/{{.ID}}/totp/clear" hx-target="#users-list" hx-swap="outerHTML" hx-disabled-elt="find button"
+              hx-confirm="Turn off two-factor for {{.Username}}?"
+              data-confirm="Turn off two-factor for {{.Username}}?">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="btn btn-sm" type="submit" title="Clear two-factor for {{.Username}}">Reset 2FA</button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}
     </div>
   </div>
   {{end}}

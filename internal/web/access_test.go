@@ -10,6 +10,7 @@ import (
 
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/monitoring"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 func requestAs(role *string) *http.Request {
@@ -137,6 +138,123 @@ func TestTOTPFragments(t *testing.T) {
 			t.Errorf("totp response %d should submit via HTMX", i)
 		}
 	}
+}
+
+// Enabled providers appear as sign-in buttons; disabled ones stay hidden.
+func TestLoginSSOButtons(t *testing.T) {
+	renderer := newTestRenderer(t)
+
+	providers := []sso.ProviderView{
+		{ID: 1, Name: "Google", ButtonLabel: "Google", Enabled: true},
+		{ID: 2, Name: "Retired", ButtonLabel: "Retired", Enabled: false},
+	}
+
+	var buf bytes.Buffer
+	data := loginData{Title: "Sign in", CSRF: "token", Next: "/instances", Providers: providers}
+	// loginData lives in the layout-free page; render it standalone.
+	if err := renderer.ExecuteStandalone(&buf, "templates/login.html", "login_page", data); err != nil {
+		t.Fatalf("render login: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "/auth/sso/start/1?next=%2Finstances") {
+		t.Error("enabled provider should offer a sign-in button preserving next")
+	}
+	if strings.Contains(out, "/auth/sso/start/2") {
+		t.Error("disabled provider must not offer a sign-in button")
+	}
+
+	buf.Reset()
+	if err := renderer.ExecuteStandalone(&buf, "templates/login.html", "login_page", loginData{Title: "Sign in"}); err != nil {
+		t.Fatalf("render login: %v", err)
+	}
+	if strings.Contains(buf.String(), "/auth/sso/start/") {
+		t.Error("password-only deployments must not show SSO buttons")
+	}
+}
+
+// The SSO fragment carries the provider list, callback URLs and flash.
+func TestSSOFragments(t *testing.T) {
+	renderer := newTestRenderer(t)
+
+	admin := &models.User{ID: 1, Username: "admin", Role: "admin"}
+	data := ssoFragmentData{
+		CSRF:      "test-token",
+		User:      admin,
+		SSOKeySet: true,
+		Providers: []sso.ProviderView{{
+			ID: 3, Name: "Keycloak", Issuer: "https://id.example.com/realms/x",
+			ClientID: "console", HasSecret: true, ButtonLabel: "Keycloak",
+			DefaultRole: "viewer", RequireMFA: true, Enabled: true,
+			CallbackURL: "https://console.example.com/auth/sso/callback/3",
+		}},
+		Notice: "Sign-in method Keycloak saved.",
+	}
+
+	var buf bytes.Buffer
+	if err := renderer.ExecutePartial(&buf, "settings", "sso_response", data); err != nil {
+		t.Fatalf("render sso response: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `id="sso-list-wrap"`) {
+		t.Error("sso response should contain the provider list")
+	}
+	if !strings.Contains(out, "hx-swap-oob") {
+		t.Error("sso response should carry out-of-band swaps")
+	}
+	if !strings.Contains(out, "https://console.example.com/auth/sso/callback/3") {
+		t.Error("sso response should show the exact callback URL to register")
+	}
+	if !strings.Contains(out, "Keycloak saved.") {
+		t.Error("sso response should contain the flash message")
+	}
+}
+
+// Admins assign each account exactly one allowed sign-in path.
+func TestUsersMethodControls(t *testing.T) {
+	renderer := newTestRenderer(t)
+
+	users := []models.User{
+		{ID: 1, Username: "admin", Role: "admin", AuthMethod: "either"},
+		{ID: 2, Username: "viewer", Role: "viewer", AuthMethod: "sso", TOTPEnabled: true},
+	}
+	links := map[int64][]string{2: {"Keycloak"}}
+
+	t.Run("admin", func(t *testing.T) {
+		var buf bytes.Buffer
+		data := usersFragmentData{
+			CSRF: "test-token", User: &users[0], Users: users, Links: links,
+		}
+		if err := renderer.ExecutePartial(&buf, "settings", "users_response", data); err != nil {
+			t.Fatalf("render users response: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "/settings/users/2/method") {
+			t.Error("admins should see the sign-in method control")
+		}
+		if !strings.Contains(out, "Single sign-on: Keycloak") {
+			t.Error("linked providers should show on the account")
+		}
+		if !strings.Contains(out, "/settings/users/2/totp/clear") {
+			t.Error("admins should see 2FA reset for other users with it on")
+		}
+		if strings.Contains(out, "/settings/users/1/totp/clear") {
+			t.Error("admins must not see 2FA reset for their own account")
+		}
+	})
+
+	t.Run("viewer", func(t *testing.T) {
+		var buf bytes.Buffer
+		data := usersFragmentData{
+			CSRF: "test-token", User: &users[1], Users: users, Links: links,
+		}
+		if err := renderer.ExecutePartial(&buf, "settings", "users_response", data); err != nil {
+			t.Fatalf("render users response: %v", err)
+		}
+		out := buf.String()
+		if strings.Contains(out, "/settings/users/2/method") || strings.Contains(out, "totp/clear") {
+			t.Error("viewers must not see sign-in or 2FA controls")
+		}
+	})
 }
 
 // Admins get a delete button in front of every other username, but never for

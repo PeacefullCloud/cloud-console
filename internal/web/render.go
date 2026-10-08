@@ -17,6 +17,7 @@ import (
 	"github.com/peaceful/cloud-console/internal/auth"
 	"github.com/peaceful/cloud-console/internal/incus"
 	"github.com/peaceful/cloud-console/internal/models"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 // Renderer parses one template set per page.
@@ -216,6 +217,13 @@ func (r *Renderer) funcMap() template.FuncMap {
 		// missing values deny access, so viewers never see admin UI).
 		"canWrite": func(v any) bool { return auth.CanWrite(roleName(v)) },
 		"canAdmin": func(v any) bool { return auth.CanAdmin(roleName(v)) },
+		// authMethod labels a user's sign-in method for the users list.
+		"authMethod": methodLabel,
+		"join":       strings.Join,
+		// ssoBlank is an empty provider for the add-provider form.
+		"ssoBlank": func() sso.ProviderView {
+			return sso.ProviderView{DefaultRole: auth.RoleViewer, RequireMFA: true, Enabled: true}
+		},
 	}
 }
 

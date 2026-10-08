@@ -331,6 +331,25 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
+/* SSO sign-in buttons on the login page. */
+.sso-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.sso-divider::before, .sso-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+.sso-btn { margin-top: 8px; }
+
 /* ---------- Cards ------------------------------------------------------- */
 
 .card {

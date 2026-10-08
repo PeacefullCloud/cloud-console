@@ -52,6 +52,13 @@
         <button class="btn btn-primary btn-block" type="submit">Sign in</button>
       </form>
 
+      {{if .Providers}}
+      <div class="sso-divider"><span>or continue with</span></div>
+      {{range .Providers}}{{if .Enabled}}
+      <a class="btn btn-block sso-btn" href="/auth/sso/start/{{.ID}}{{if $.Next}}?next={{urlquery $.Next}}{{end}}">Sign in with {{.ButtonLabel}}</a>
+      {{end}}{{end}}
+      {{end}}
+
       <p class="faint small login-foot">
         First run? The bootstrap administrator password is printed once in the server log.
       </p>

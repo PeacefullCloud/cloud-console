@@ -13,6 +13,7 @@ type User struct {
 	Username     string
 	PasswordHash string
 	Role         string // admin | operator | viewer
+	AuthMethod   string // either | password | sso — which sign-in paths work
 	CreatedAt    time.Time
 	LastLoginAt  *time.Time
 
@@ -124,4 +125,27 @@ type Job struct {
 type Setting struct {
 	Key   string
 	Value string
+}
+
+// SSOProvider is an OpenID Connect identity provider configured in Settings.
+// ClientSecret is always encrypted at rest; View carries the safe subset.
+type SSOProvider struct {
+	ID           int64
+	Name         string
+	Issuer       string
+	ClientID     string
+	ClientSecret string // encrypted when stored
+	ButtonLabel  string
+	DefaultRole  string // admin | operator | viewer for JIT-provisioned users
+	RequireMFA   bool   // require an MFA marker in the token's amr claim
+	Enabled      bool
+	CreatedAt    time.Time
+}
+
+// UserIdentity links a console user to their subject at a provider.
+type UserIdentity struct {
+	UserID     int64
+	ProviderID int64
+	Subject    string
+	CreatedAt  time.Time
 }

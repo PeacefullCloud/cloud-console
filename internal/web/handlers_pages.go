@@ -362,6 +362,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		baseData: s.newBase(w, r, "settings", "Settings"),
 		Host:     host,
 		Users:    users,
+		Links:    s.SSO.IdentityLabels(),
 
 		S3Configured:      s.App.Cfg.S3Configured(),
 		S3Bucket:          s.App.Cfg.S3Bucket,
@@ -385,6 +386,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		IncusProject: s.App.Cfg.IncusProject,
 	}
+
+	if providers, err := s.SSO.ProviderViews(); err != nil {
+		s.log.Warn("could not list sso providers", "err", err)
+	} else {
+		data.Providers = providers
+	}
+	data.SSOKeySet = s.App.Cfg.SSOKeySet()
 
 	if list, err := s.Instances.List(r.Context()); err == nil {
 		running := 0
@@ -443,7 +451,7 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 // serveUsersFragments renders the HTMX response for user create/delete: the
 // fresh users list plus out-of-band swaps for the flash and the user count.
 func (s *Server) serveUsersFragments(w http.ResponseWriter, r *http.Request, actionErr error, notice string) {
-	data := usersFragmentData{CSRF: csrfFrom(r), User: userFrom(r)}
+	data := usersFragmentData{CSRF: csrfFrom(r), User: userFrom(r), Links: s.SSO.IdentityLabels()}
 	if actionErr != nil {
 		data.Error = friendlyError(actionErr)
 	} else {

@@ -21,7 +21,7 @@ func (d *DB) CreateSession(tokenHash string, userID int64, expires time.Time, ip
 // still valid.
 func (d *DB) SessionUser(tokenHash string) (*models.User, error) {
 	row := d.sql.QueryRow(`
-		SELECT u.id, u.username, u.password_hash, u.role, u.created_at, u.last_login_at
+		SELECT u.id, u.username, u.password_hash, u.role, u.auth_method, u.created_at, u.last_login_at
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = ? AND s.expires_at > ?`,
@@ -30,7 +30,7 @@ func (d *DB) SessionUser(tokenHash string) (*models.User, error) {
 	var u models.User
 	var created any
 	var last any
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &created, &last)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.AuthMethod, &created, &last)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

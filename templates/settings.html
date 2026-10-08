@@ -144,6 +144,10 @@ S3_USE_SSL=true</pre>
         {{end}}
       </div>
 
+      {{if canAdmin .User}}
+      {{template "sso_card" .}}
+      {{end}}
+
       <div class="card">
         <div class="card-head"><div class="grow"><div class="card-title">Your password</div></div></div>
         <form method="post" action="/settings/password"
