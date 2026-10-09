@@ -160,7 +160,8 @@ func (s *Service) EnqueueCreate(username string, req CreateRequest) (*models.Job
 	return s.app.Jobs.Enqueue(username, JobCreate, req.Name, string(payload))
 }
 
-// handleCreate runs the create job: the nine steps from the V1 plan.
+// handleCreate runs the create job: build, start, provision SSH, record,
+// and route the new instance.
 func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 	var payload createPayload
 	if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
@@ -239,15 +240,16 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		s.app.Log.Warn("guest agent not ready", "instance", req.Name, "err", err)
 	}
 
-	// 6. Configure SSH access. A failure here is not fatal: the instance
-	// runs and stays manageable with incus exec, but the user is told.
+	// 6. Configure SSH access in the background while the steps below run:
+	// a first-boot package install dominates this step and nothing
+	// afterwards depends on SSH being ready, so blocking on it only stalls
+	// the progress bar. The result is collected at step 11 before the job
+	// finishes, keeping progress messages in order.
 	s.app.Jobs.Progress(job.ID, 62, "Setting up SSH access")
-	if err := s.EnsureSSH(ctx, req.Name, image, req.RootPassword, req.SSHKey); err != nil {
-		s.app.Log.Warn("ssh setup incomplete", "instance", req.Name, "err", err)
-		s.app.Jobs.Progress(job.ID, 68, "SSH setup incomplete: "+err.Error())
-	} else {
-		s.app.Jobs.Progress(job.ID, 68, "SSH access ready for root")
-	}
+	sshDone := make(chan error, 1)
+	go func() {
+		sshDone <- s.EnsureSSH(ctx, req.Name, image, req.RootPassword, req.SSHKey)
+	}()
 
 	// 7. Wait until it has a network address.
 	s.app.Jobs.Progress(job.ID, 70, "Waiting for the network to come up")
@@ -285,6 +287,17 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 	// 10. Re-render Caddy so the domain reaches the new container.
 	s.app.Jobs.Progress(job.ID, 95, "Applying web routing")
 	s.notifyChanged(ctx, req.Name)
+
+	// 11. Collect the SSH setup result. A failure here is not fatal: the
+	// instance runs and stays manageable with incus exec, but the user is
+	// told. Name the wait honestly: routing is done, SSH is what is left.
+	s.app.Jobs.Progress(job.ID, 95, "Waiting for SSH access to finish")
+	if err := <-sshDone; err != nil {
+		s.app.Log.Warn("ssh setup incomplete", "instance", req.Name, "err", err)
+		s.app.Jobs.Progress(job.ID, 96, "SSH setup incomplete: "+err.Error())
+	} else {
+		s.app.Jobs.Progress(job.ID, 96, "SSH access ready for root")
+	}
 
 	if ip != "" {
 		s.app.Jobs.Progress(job.ID, 100, "Instance is running at "+ip)

@@ -22,18 +22,46 @@ func (s *Service) EnsureSSH(ctx context.Context, name string, image incus.Image,
 		return fmt.Errorf("%w: a root password or SSH key is required", ErrInvalidSpec)
 	}
 
+	// The key, the password and the server install are independent of each
+	// other, so run them together: the step costs the slowest of the three
+	// instead of the sum.
+	type task struct {
+		name string
+		run  func() error
+	}
+	tasks := make([]task, 0, 3)
 	if key != "" {
-		if err := s.installSSHKey(ctx, name, key); err != nil {
-			return err
-		}
+		tasks = append(tasks, task{"install SSH key", func() error {
+			return s.installSSHKey(ctx, name, key)
+		}})
 	}
 	if password != "" {
-		if err := s.setRootPassword(ctx, name, password); err != nil {
-			return err
+		tasks = append(tasks, task{"set root password", func() error {
+			return s.setRootPassword(ctx, name, password)
+		}})
+	}
+	tasks = append(tasks, task{"install OpenSSH server", func() error {
+		return s.ensureSSHServer(ctx, name, image)
+	}})
+
+	errs := make(chan error, len(tasks))
+	for _, t := range tasks {
+		go func() {
+			if err := t.run(); err != nil {
+				errs <- fmt.Errorf("%s: %w", t.name, err)
+			} else {
+				errs <- nil
+			}
+		}()
+	}
+	var firstErr error
+	for range tasks {
+		if err := <-errs; err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	if err := s.ensureSSHServer(ctx, name, image); err != nil {
-		return err
+	if firstErr != nil {
+		return firstErr
 	}
 	return s.enableSSH(ctx, name, image, password != "")
 }
@@ -77,9 +105,13 @@ func (s *Service) ensureSSHServer(ctx context.Context, name string, image incus.
 	var install string
 	switch image.PackageManager {
 	case "apt":
-		install = "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server"
+		// Fresh container images usually ship no apt lists, so an update
+		// is needed; skip it when the cache is younger than a day, and
+		// skip recommended extras (xauth and friends) sshd never needs.
+		install = `test -n "$(find /var/lib/apt/lists -maxdepth 1 -name '*_InRelease' -mmin -1440 2>/dev/null)" || apt-get update` +
+			` && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-server`
 	case "dnf":
-		install = "dnf install -y openssh-server"
+		install = "dnf install -y --setopt=install_weak_deps=False openssh-server"
 	case "apk":
 		install = "apk add --no-cache openssh-server openssh-server-common openrc"
 	default:
@@ -104,44 +136,39 @@ func (s *Service) enableSSH(ctx context.Context, name string, image incus.Image,
 		passAuth = "yes"
 	}
 	configure := fmt.Sprintf(
-		`sed -i 's/^#*PermitRootLogin.*/PermitRootLogin %s/' /etc/ssh/sshd_config; `+
-			`grep -q '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin %s' >> /etc/ssh/sshd_config; `+
-			`sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication %s/' /etc/ssh/sshd_config; `+
-			`grep -q '^PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication %s' >> /etc/ssh/sshd_config`,
+		`set -e
+sed -i 's/^#*PermitRootLogin.*/PermitRootLogin %s/' /etc/ssh/sshd_config
+grep -q '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin %s' >> /etc/ssh/sshd_config
+sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication %s/' /etc/ssh/sshd_config
+grep -q '^PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication %s' >> /etc/ssh/sshd_config
+command -v ssh-keygen >/dev/null 2>&1 && ssh-keygen -A || true`,
 		permitRoot, permitRoot, passAuth, passAuth)
-	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", configure); err != nil {
-		return fmt.Errorf("configure sshd: %w", err)
-	}
 
 	unit := image.SSHUnit
 	if unit == "" {
 		unit = "sshd"
 	}
+	// Detect the init system once and run a single start command instead of
+	// trying every known starter in turn: each attempt is an exec round-trip,
+	// and a systemctl call without systemd running is pure dead time.
 	// Restart first: a package install often auto-starts sshd with the
 	// image default config, and enable/start is a no-op on a running
 	// service, which would leave the old policy active.
-	starts := []string{
-		"systemctl restart " + unit,
-		"systemctl enable --now " + unit,
-		"service " + unit + " restart",
-		"service " + unit + " start",
-		"rc-update add sshd default && rc-service sshd restart",
-		"pkill -x sshd; sleep 1; /usr/sbin/sshd",
-	}
-	var lastErr error
-	for _, start := range starts {
-		if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", start); err == nil {
-			lastErr = nil
-			break
-		} else {
-			lastErr = err
-		}
-	}
-	if lastErr != nil {
-		return fmt.Errorf("start sshd: %w", lastErr)
+	start := fmt.Sprintf(`
+if [ -d /run/systemd/system ]; then
+  systemctl restart %[1]s || systemctl enable --now %[1]s
+elif command -v rc-service >/dev/null 2>&1; then
+  rc-update add sshd default && rc-service sshd restart
+elif command -v service >/dev/null 2>&1; then
+  service %[1]s restart || service %[1]s start
+else
+  pkill -x sshd 2>/dev/null || true; sleep 1; /usr/sbin/sshd
+fi`, unit)
+	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", configure+"\n"+start); err != nil {
+		return fmt.Errorf("configure and start sshd: %w", err)
 	}
 
-	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", "pgrep -x sshd"); err != nil {
+	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", "pgrep -x sshd 2>/dev/null || pidof sshd >/dev/null"); err != nil {
 		return fmt.Errorf("sshd is not running: %w", err)
 	}
 	return nil
