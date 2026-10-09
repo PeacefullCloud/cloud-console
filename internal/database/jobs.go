@@ -29,6 +29,16 @@ func (d *DB) WipeJobPayload(id string) error {
 	return err
 }
 
+// WipeFinishedJobPayloads clears payloads left by jobs that ended before
+// FinishJob started doing it, so old root passwords do not linger.
+func (d *DB) WipeFinishedJobPayloads() (int64, error) {
+	res, err := d.sql.Exec(`UPDATE jobs SET payload = '' WHERE payload != '' AND status NOT IN ('queued', 'running')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // StartJob marks a job as running.
 func (d *DB) StartJob(id string) error {
 	_, err := d.sql.Exec(
@@ -42,10 +52,12 @@ func (d *DB) UpdateJobProgress(id string, progress int, message string) error {
 	return err
 }
 
-// FinishJob marks a job as done or failed.
+// FinishJob marks a job as done or failed. The payload goes with it: it can
+// carry credentials (an instance's root password), and nothing reads it once
+// the job is over.
 func (d *DB) FinishJob(id, status, message, errMsg string) error {
 	_, err := d.sql.Exec(`
-		UPDATE jobs SET status = ?, progress = 100, message = ?, error = ?, ended_at = CURRENT_TIMESTAMP
+		UPDATE jobs SET status = ?, progress = 100, message = ?, error = ?, payload = '', ended_at = CURRENT_TIMESTAMP
 		WHERE id = ?`, status, message, errMsg, id)
 	return err
 }
@@ -103,11 +115,13 @@ func (d *DB) ListActiveJobs() ([]models.Job, error) {
 	return out, rows.Err()
 }
 
-// FailStaleJobs marks jobs left running by a restart as failed.
+// FailStaleJobs marks jobs that were mid-run at a restart as failed: their
+// work was cut off and cannot be resumed. Jobs that never started stay queued
+// and are picked up again.
 func (d *DB) FailStaleJobs() (int64, error) {
 	res, err := d.sql.Exec(`
-		UPDATE jobs SET status = 'failed', error = 'interrupted by console restart', ended_at = CURRENT_TIMESTAMP
-		WHERE status IN ('queued', 'running')`)
+		UPDATE jobs SET status = 'failed', error = 'interrupted by console restart', payload = '', ended_at = CURRENT_TIMESTAMP
+		WHERE status = 'running'`)
 	if err != nil {
 		return 0, err
 	}

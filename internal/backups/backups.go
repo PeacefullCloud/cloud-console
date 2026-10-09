@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	incusapi "github.com/lxc/incus/v6/shared/api"
@@ -104,15 +105,23 @@ func (s *Service) List(ctx context.Context, instanceName string) ([]Backup, erro
 		return nil, err
 	}
 
+	// One lookup serves both the availability flags and the untracked list.
+	raw, rawErr := s.app.Incus.Backups(instanceName)
+	inIncus := map[string]bool{}
+	for _, b := range raw {
+		inIncus[b.Name] = true
+	}
+	lookup := func(string) map[string]bool { return inIncus }
+
 	known := map[string]bool{}
 	out := make([]Backup, 0, len(rows))
 	for _, r := range rows {
 		known[r.Name] = true
-		out = append(out, s.enrich(ctx, r))
+		out = append(out, s.enrich(r, lookup))
 	}
 
 	// Surface backups that exist in incusd but are not tracked by the console.
-	if raw, err := s.app.Incus.Backups(instanceName); err == nil {
+	if rawErr == nil {
 		for _, b := range raw {
 			if known[b.Name] {
 				continue
@@ -124,11 +133,12 @@ func (s *Service) List(ctx context.Context, instanceName string) ([]Backup, erro
 				Status:       "complete",
 				CreatedAt:    b.CreatedAt,
 				InIncus:      true,
-				LocalPath:    s.archivePath(instanceName, b.Name),
+				LocalPath:    s.displayPath(instanceName, b.Name),
 			})
 		}
 	}
 
+	s.checkS3(ctx, out)
 	s.markBusy(out)
 	return out, nil
 }
@@ -201,10 +211,27 @@ func (s *Service) All(ctx context.Context) ([]Backup, error) {
 		return nil, err
 	}
 
+	// One Incus call per instance, not per backup.
+	perInstance := map[string]map[string]bool{}
+	lookup := func(instance string) map[string]bool {
+		if names, ok := perInstance[instance]; ok {
+			return names
+		}
+		names := map[string]bool{}
+		if raw, err := s.app.Incus.Backups(instance); err == nil {
+			for _, b := range raw {
+				names[b.Name] = true
+			}
+		}
+		perInstance[instance] = names
+		return names
+	}
+
 	out := make([]Backup, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, s.enrich(ctx, r))
+		out = append(out, s.enrich(r, lookup))
 	}
+	s.checkS3(ctx, out)
 	s.markBusy(out)
 	return out, nil
 }
@@ -267,13 +294,19 @@ func (s *Service) EnqueueRestore(username, instanceName, name string) (*models.J
 // Delete removes a backup archive from Incus, local disk and S3, then drops the
 // console record.
 func (s *Service) Delete(ctx context.Context, instanceName, name string) error {
+	if _, err := s.archivePath(instanceName, name); err != nil {
+		return err
+	}
+
 	var errs []error
 
 	if err := s.app.Incus.DeleteBackup(ctx, instanceName, name); err != nil && !incus.IsNotFound(err) {
 		errs = append(errs, fmt.Errorf("incus: %w", err))
 	}
 
-	if err := removeLocal(s.archivePath(instanceName, name)); err != nil {
+	if path, err := s.archivePath(instanceName, name); err != nil {
+		errs = append(errs, err)
+	} else if err := removeLocal(path); err != nil {
 		errs = append(errs, fmt.Errorf("local archive: %w", err))
 	}
 
@@ -344,7 +377,10 @@ func (s *Service) createArchive(ctx context.Context, job *models.Job, payload ba
 	}()
 
 	s.app.Jobs.Progress(job.ID, 40, "Exporting the archive")
-	path := s.archivePath(payload.Instance, payload.Name)
+	path, err := s.archivePath(payload.Instance, payload.Name)
+	if err != nil {
+		return err
+	}
 
 	onProgress := func(current int64) {
 		s.app.Jobs.Progress(job.ID, 55+int(current/(64<<20)), "Exporting the archive")
@@ -395,7 +431,10 @@ func (s *Service) handleExport(ctx context.Context, job *models.Job) error {
 		return ErrNoS3
 	}
 
-	path := s.archivePath(payload.Instance, payload.Name)
+	path, err := s.archivePath(payload.Instance, payload.Name)
+	if err != nil {
+		return err
+	}
 
 	// Re-create a local archive from Incus when the local copy is missing.
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
@@ -437,7 +476,10 @@ func (s *Service) handleRestore(ctx context.Context, job *models.Job) error {
 		return err
 	}
 
-	path := s.archivePath(payload.Instance, payload.Name)
+	path, err := s.archivePath(payload.Instance, payload.Name)
+	if err != nil {
+		return err
+	}
 
 	// Pull the archive back from object storage when there is no local copy.
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
@@ -461,22 +503,18 @@ func (s *Service) handleRestore(ctx context.Context, job *models.Job) error {
 	}
 	defer f.Close()
 
-	// Imports require the name to be free, so replace any existing instance.
-	s.app.Jobs.Progress(job.ID, 25, "Removing the existing instance")
-	if _, err := s.app.Incus.Instance(payload.Instance); err == nil {
-		if err := s.app.Incus.DeleteInstance(ctx, payload.Instance); err != nil {
-			return fmt.Errorf("remove existing instance: %w", err)
-		}
+	outcome, err := restoreInstance(ctx, s.app.Incus, payload.Instance, f, func(pct int, msg string) {
+		s.app.Jobs.Progress(job.ID, pct, msg)
+	})
+	if err != nil {
+		return err
 	}
-
-	s.app.Jobs.Progress(job.ID, 40, "Importing the backup into Incus")
-	if err := s.app.Incus.ImportBackup(ctx, payload.Instance, f, ""); err != nil {
-		return fmt.Errorf("import backup: %w", err)
+	if outcome.StartErr != nil {
+		s.app.Log.Warn("restored instance did not start", "instance", payload.Instance, "err", outcome.StartErr)
 	}
-
-	s.app.Jobs.Progress(job.ID, 80, "Starting the restored instance")
-	if err := s.app.Incus.Start(ctx, payload.Instance); err != nil {
-		s.app.Log.Warn("restored instance did not start", "instance", payload.Instance, "err", err)
+	if outcome.Leftover != "" {
+		s.app.Log.Warn("replaced instance could not be removed; delete it manually",
+			"instance", payload.Instance, "leftover", outcome.Leftover)
 	}
 
 	s.app.Jobs.Progress(job.ID, 90, "Waiting for the network")
@@ -527,13 +565,53 @@ func decode(job *models.Job) (backupPayload, error) {
 	return payload, nil
 }
 
-// archivePath is where a backup archive lives on the console's disk.
-func (s *Service) archivePath(instanceName, backupName string) string {
-	return filepath.Join(s.app.Cfg.DataDir, "backups", instanceName, backupName+".tar.gz")
+// ErrInvalidName is returned for instance or backup names that could not be a
+// safe file name.
+var ErrInvalidName = errors.New("invalid instance or backup name")
+
+// safeSegment reports whether name can be one path element without escaping
+// its directory: no separators, no leading dot, no control characters.
+func safeSegment(name string) bool {
+	if name == "" || len(name) > 128 || name[0] == '.' {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
-// enrich adds archive availability to a database row.
-func (s *Service) enrich(ctx context.Context, row models.Backup) Backup {
+// archivePath is where a backup archive lives on the console's disk. Names
+// arrive from URLs and job payloads, so the result is verified to stay inside
+// the backups directory before anything reads, writes or deletes it.
+func (s *Service) archivePath(instanceName, backupName string) (string, error) {
+	if !safeSegment(instanceName) || !safeSegment(backupName) {
+		return "", ErrInvalidName
+	}
+
+	root := filepath.Join(s.app.Cfg.DataDir, "backups")
+	path := filepath.Join(root, instanceName, backupName+".tar.gz")
+	if rel, err := filepath.Rel(root, path); err != nil || !filepath.IsLocal(rel) {
+		return "", ErrInvalidName
+	}
+	return path, nil
+}
+
+// displayPath is archivePath for listings: names that are not safe simply
+// have no local file to show.
+func (s *Service) displayPath(instanceName, backupName string) string {
+	path, err := s.archivePath(instanceName, backupName)
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+// enrich adds archive availability to a database row. incusNames returns the
+// backup names Incus holds for an instance and is expected to cache.
+func (s *Service) enrich(row models.Backup, incusNames func(instance string) map[string]bool) Backup {
 	out := Backup{
 		Name:         row.Name,
 		InstanceName: row.InstanceName,
@@ -544,7 +622,7 @@ func (s *Service) enrich(ctx context.Context, row models.Backup) Backup {
 		S3Key:        row.S3Key,
 		CreatedAt:    row.CreatedAt,
 		CreatedBy:    row.CreatedBy,
-		LocalPath:    s.archivePath(row.InstanceName, row.Name),
+		LocalPath:    s.displayPath(row.InstanceName, row.Name),
 	}
 
 	if info, err := os.Stat(out.LocalPath); err == nil {
@@ -554,20 +632,35 @@ func (s *Service) enrich(ctx context.Context, row models.Backup) Backup {
 		}
 	}
 
-	if backups, err := s.app.Incus.Backups(row.InstanceName); err == nil {
-		for _, b := range backups {
-			if b.Name == row.Name {
-				out.InIncus = true
-				break
-			}
-		}
-	}
-
-	if row.S3Key != "" && s.s3 != nil {
-		out.InS3 = s.s3.Exists(ctx, row.S3Key)
-	}
-
+	out.InIncus = incusNames(row.InstanceName)[row.Name]
 	return out
+}
+
+// s3CheckConcurrency bounds parallel object lookups.
+const s3CheckConcurrency = 8
+
+// checkS3 fills InS3 for every backup that has an offsite copy. Lookups run in
+// parallel and are cached briefly, so a long list is not one slow round trip
+// per row on every page view.
+func (s *Service) checkS3(ctx context.Context, list []Backup) {
+	if s.s3 == nil {
+		return
+	}
+	sem := make(chan struct{}, s3CheckConcurrency)
+	var wg sync.WaitGroup
+	for i := range list {
+		if list[i].S3Key == "" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(b *Backup) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			b.InS3 = s.s3.Exists(ctx, b.S3Key)
+		}(&list[i])
+	}
+	wg.Wait()
 }
 
 // SuggestName builds a timestamped backup name.
@@ -589,4 +682,72 @@ func validBackupName(name string) bool {
 		}
 	}
 	return true
+}
+
+// archiveDir is the directory holding one instance's local archives.
+func (s *Service) archiveDir(instanceName string) (string, error) {
+	if !safeSegment(instanceName) {
+		return "", ErrInvalidName
+	}
+	return filepath.Join(s.app.Cfg.DataDir, "backups", instanceName), nil
+}
+
+// InstanceRenamed moves local archives to the new instance's directory so the
+// renamed instance still finds them. S3 keys are stored per backup and need no
+// change.
+func (s *Service) InstanceRenamed(oldName, newName string) {
+	from, err := s.archiveDir(oldName)
+	if err != nil {
+		return
+	}
+	to, err := s.archiveDir(newName)
+	if err != nil {
+		return
+	}
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(to, 0o750); err != nil {
+		s.app.Log.Warn("could not create backup directory for renamed instance", "dir", to, "err", err)
+		return
+	}
+	for _, e := range entries {
+		dst := filepath.Join(to, e.Name())
+		if _, err := os.Lstat(dst); err == nil {
+			s.app.Log.Warn("not overwriting an existing archive while renaming", "path", dst)
+			continue
+		}
+		if err := os.Rename(filepath.Join(from, e.Name()), dst); err != nil {
+			s.app.Log.Warn("could not move backup archive", "archive", e.Name(), "err", err)
+		}
+	}
+	// Fails harmlessly if something was left behind.
+	_ = os.Remove(from)
+}
+
+// InstanceDeleted removes an instance's local archives and offsite copies. The
+// console drops the backup records with the instance, so anything left would be
+// unreachable and keep using disk or bucket space.
+func (s *Service) InstanceDeleted(ctx context.Context, name string) {
+	if s.s3 != nil {
+		if rows, err := s.app.DB.ListBackupsForInstance(name); err == nil {
+			for _, row := range rows {
+				if row.S3Key == "" {
+					continue
+				}
+				if err := s.s3.Delete(ctx, row.S3Key); err != nil {
+					s.app.Log.Warn("could not delete offsite backup of a deleted instance", "key", row.S3Key, "err", err)
+				}
+			}
+		}
+	}
+
+	dir, err := s.archiveDir(name)
+	if err != nil {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		s.app.Log.Warn("could not remove local backups of a deleted instance", "dir", dir, "err", err)
+	}
 }

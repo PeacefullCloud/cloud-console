@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/peaceful/cloud-console/internal/config"
@@ -33,6 +34,9 @@ type Manager struct {
 	cfg *config.Config
 	log *slog.Logger
 
+	// mu serialises Sync: instance events arrive concurrently, and two
+	// writers would interleave file replacements and reloads.
+	mu   sync.Mutex
 	last string // last rendered config, used to skip no-op reloads
 }
 
@@ -65,17 +69,24 @@ func (m *Manager) Render(routes []Route) string {
 	b.WriteString("}\n")
 
 	// Optional block for the console itself.
-	if host := m.cfg.BaseURL; host != "" {
-		if h := hostFromURL(host); h != "" && h != "localhost" {
-			fmt.Fprintf(&b, "\n# Console UI\n%s {\n\tencode zstd gzip\n\treverse_proxy %s\n}\n",
-				h, consoleUpstream(m.cfg.Addr))
-		}
+	consoleHost := m.ConsoleHost()
+	if consoleHost != "" {
+		fmt.Fprintf(&b, "\n# Console UI\n%s {\n\tencode zstd gzip\n\treverse_proxy %s\n}\n",
+			consoleHost, consoleUpstream(m.cfg.Addr))
 	}
 
+	// A repeated site address makes Caddy reject the whole file, which would
+	// take every site down, so a repeat (or the console's own host) is dropped.
+	seen := map[string]bool{consoleHost: consoleHost != ""}
 	for _, r := range sorted {
 		if r.Domain == "" || r.Upstream == "" {
 			continue
 		}
+		if seen[r.Domain] {
+			m.log.Warn("skipping duplicate caddy site", "domain", r.Domain)
+			continue
+		}
+		seen[r.Domain] = true
 
 		fmt.Fprintf(&b, "\n%s {\n", r.Domain)
 		b.WriteString("\tencode zstd gzip\n")
@@ -93,28 +104,64 @@ func (m *Manager) Render(routes []Route) string {
 	return b.String()
 }
 
-// Sync renders the Caddyfile, writes it to disk and reloads Caddy.
+// ConsoleHost is the hostname the console itself is served on through Caddy,
+// or "" when it is not routed. Instance domains must not reuse it.
+func (m *Manager) ConsoleHost() string {
+	h := hostFromURL(m.cfg.BaseURL)
+	if h == "" || h == "localhost" {
+		return ""
+	}
+	return strings.ToLower(h)
+}
+
+// Sync renders the Caddyfile, applies it and writes it to disk.
 //
-// A no-op when nothing changed, so frequent calls stay cheap.
+// A no-op when nothing changed, so frequent calls stay cheap. A configuration
+// Caddy refuses is never left behind as the file on disk, otherwise the next
+// Caddy restart would come up broken.
 func (m *Manager) Sync(ctx context.Context, routes []Route) error {
 	if !m.Enabled() {
 		return nil
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	rendered := m.Render(routes)
 	if rendered == m.last {
 		return nil
 	}
 
-	// Caddy validates a bad config on reload; keep the old one until it passes.
-	if m.cfg.CaddyConfigPath != "" {
-		if err := writeFileAtomic(m.cfg.CaddyConfigPath, rendered); err != nil {
-			return fmt.Errorf("write caddyfile: %w", err)
+	if m.cfg.CaddyAdminURL != "" {
+		// The admin API validates before it swaps, so the file is only
+		// replaced once Caddy has accepted the configuration.
+		if err := m.reload(ctx, rendered); err != nil {
+			return err
 		}
-	}
-
-	if err := m.reload(ctx, rendered); err != nil {
-		return err
+		if m.cfg.CaddyConfigPath != "" {
+			if err := writeFileAtomic(m.cfg.CaddyConfigPath, rendered); err != nil {
+				return fmt.Errorf("caddy accepted the configuration but writing %s failed: %w", m.cfg.CaddyConfigPath, err)
+			}
+		}
+	} else {
+		var previous []byte
+		hadPrevious := false
+		if m.cfg.CaddyConfigPath != "" {
+			if body, err := os.ReadFile(m.cfg.CaddyConfigPath); err == nil {
+				previous, hadPrevious = body, true
+			}
+			if err := writeFileAtomic(m.cfg.CaddyConfigPath, rendered); err != nil {
+				return fmt.Errorf("write caddyfile: %w", err)
+			}
+		}
+		if err := m.reload(ctx, rendered); err != nil {
+			if m.cfg.CaddyConfigPath != "" && hadPrevious {
+				if rerr := writeFileAtomic(m.cfg.CaddyConfigPath, string(previous)); rerr != nil {
+					m.log.Error("could not restore the previous caddyfile", "err", rerr)
+				}
+			}
+			return err
+		}
 	}
 
 	m.last = rendered

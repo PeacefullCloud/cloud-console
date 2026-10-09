@@ -38,7 +38,7 @@ func TestCryptoRoundTrip(t *testing.T) {
 func TestStateStoreSingleUse(t *testing.T) {
 	store := newStateStore()
 
-	state, err := store.save(7, "/instances", "nonce", "verifier")
+	state, err := store.save(7, "/instances", "nonce", "verifier", 42)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestStateStoreSingleUse(t *testing.T) {
 	if !ok {
 		t.Fatal("fresh state should consume")
 	}
-	if got.providerID != 7 || got.next != "/instances" || got.nonce != "nonce" || got.verifier != "verifier" {
+	if got.providerID != 7 || got.next != "/instances" || got.nonce != "nonce" || got.verifier != "verifier" || got.linkUserID != 42 {
 		t.Errorf("state = %+v, want the stored values", got)
 	}
 
@@ -119,5 +119,20 @@ func TestLoginName(t *testing.T) {
 	claims.Name = "Jane Doe"
 	if got := loginName(claims); got != "Jane Doe" {
 		t.Errorf("loginName = %q, want the name fallback", got)
+	}
+}
+
+func TestNormalizeDomains(t *testing.T) {
+	got, err := NormalizeDomains(" @Example.com, example.org;EXAMPLE.com\nfoo-bar.io ")
+	if err != nil || got != "example.com,example.org,foo-bar.io" {
+		t.Fatalf("NormalizeDomains = %q, %v", got, err)
+	}
+	if got, err := NormalizeDomains(""); got != "" || err != nil {
+		t.Fatalf("empty = %q, %v", got, err)
+	}
+	for _, bad := range []string{"localhost", "a b@c.com", "exa_mple.com", ".com", "example.com/"} {
+		if _, err := NormalizeDomains(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }

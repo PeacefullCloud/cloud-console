@@ -138,8 +138,12 @@ type SSOProvider struct {
 	ButtonLabel  string
 	DefaultRole  string // admin | operator | viewer for JIT-provisioned users
 	RequireMFA   bool   // require an MFA marker in the token's amr claim
-	Enabled      bool
-	CreatedAt    time.Time
+	// Provisioning is open | domains | link_only; AllowedDomains is a
+	// comma-separated list used by the domains mode.
+	Provisioning   string
+	AllowedDomains string
+	Enabled        bool
+	CreatedAt      time.Time
 }
 
 // UserIdentity links a console user to their subject at a provider.

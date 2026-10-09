@@ -7,6 +7,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"github.com/peaceful/cloud-console/internal/secrets"
 	"io/fs"
 	"log/slog"
 	"sort"
@@ -22,6 +23,10 @@ import (
 type DB struct {
 	sql *sql.DB
 	log *slog.Logger
+
+	// sealer protects TOTP seeds at rest. Nil leaves them in plaintext,
+	// which only tests that do not care about it rely on.
+	sealer *secrets.Sealer
 }
 
 // Open opens (creating if needed) the SQLite database at path and applies any

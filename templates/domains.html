@@ -81,6 +81,7 @@
         <p class="hint">Caddy requests a certificate as soon as DNS resolves and port 80/443 are reachable.</p>
       </div>
 
+      {{if canAdmin .User}}
       <div class="card">
         <div class="card-head">
           <div class="grow"><div class="card-title">Generated Caddyfile</div></div>
@@ -88,6 +89,7 @@
         </div>
         <pre id="caddy-preview" class="mono" style="max-height:340px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">{{.CaddyPreview}}</pre>
       </div>
+      {{end}}
     </div>
   </div>
 </div>

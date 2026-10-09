@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,13 +46,17 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	next := safeNext(r.FormValue("next"))
 
-	token, user, err := s.App.Auth.Login(username, password, clientIP(r), r.UserAgent())
+	user, err := s.App.Auth.VerifyCredentials(username, password, s.clientIP(r))
 	if err != nil {
-		s.App.Activity.Record(username, "Sign in", "", "from "+clientIP(r), err)
+		s.App.Activity.Record(username, "Sign in", "", "from "+s.clientIP(r), err)
 
 		kind := "err"
 		message := "Incorrect username or password."
-		if !errors.Is(err, auth.ErrInvalidCredentials) {
+		var lockout *auth.LockoutError
+		switch {
+		case errors.As(err, &lockout):
+			message = lockout.Error()
+		case !errors.Is(err, auth.ErrInvalidCredentials):
 			message = "Sign-in failed: " + err.Error()
 		}
 		if isHTMX(r) {
@@ -68,16 +73,28 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// No session exists yet. Accounts restricted to single sign-on stop here,
+	// before a second factor is even asked for.
+	if !sso.PasswordAllowed(user.AuthMethod) {
+		s.denyPasswordSignIn(w, r, user.Username, "Sign in")
+		return
+	}
+
 	// Second step when two-factor is on: the password passed but no session
 	// exists yet. The challenge id carries the pending login for 5 minutes.
 	if user.TOTPEnabled {
 		challenge, err := s.App.Auth.BeginTOTPChallenge(user.ID)
 		if err != nil {
+			message := "Sign-in failed: " + err.Error()
+			var lockout *auth.LockoutError
+			if errors.As(err, &lockout) {
+				message = lockout.Error()
+			}
 			if isHTMX(r) {
-				s.serveLoginFlash(w, "Sign-in failed: "+err.Error())
+				s.serveLoginFlash(w, message)
 				return
 			}
-			s.setFlash(w, "err", "Sign-in failed: "+err.Error())
+			s.setFlash(w, "err", message)
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
@@ -105,20 +122,17 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.App.Activity.Record(user.Username, "Sign in", "", "from "+clientIP(r), nil)
-	if !sso.PasswordAllowed(user.AuthMethod) {
-		// The session was already created above; close it so the denial
-		// does not leave a usable session behind.
-		_ = s.App.Auth.Logout(token)
-		s.App.Activity.Record(user.Username, "Sign in", "", "account uses single sign-on", errors.New("password sign-in disabled"))
+	token, err := s.App.Auth.OpenSession(user, s.clientIP(r), r.UserAgent())
+	if err != nil {
 		if isHTMX(r) {
-			s.serveLoginFlash(w, "This account uses single sign-on — use a sign-in button below.")
+			s.serveLoginFlash(w, "Sign-in failed: "+err.Error())
 			return
 		}
-		s.setFlash(w, "err", "This account uses single sign-on — use a sign-in button below.")
+		s.setFlash(w, "err", "Sign-in failed: "+err.Error())
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	s.App.Activity.Record(user.Username, "Sign in", "", "from "+s.clientIP(r), nil)
 	if isHTMX(r) {
 		s.setSessionCookie(w, token)
 		target := next
@@ -178,17 +192,9 @@ func (s *Server) serveLoginFlash(w http.ResponseWriter, message string) {
 	}
 }
 
-// serveTOTPForm renders the code form with a fresh challenge plus an error
+// serveTOTPForm re-renders the code form with the same challenge plus an error
 // flash, so a mistyped code retries in place without a reload.
-func (s *Server) serveTOTPForm(w http.ResponseWriter, r *http.Request, userID int64, username, next, message string) {
-	challenge, err := s.App.Auth.BeginTOTPChallenge(userID)
-	if err != nil {
-		s.setFlash(w, "err", "Sign-in failed: "+err.Error())
-		w.Header().Set("HX-Redirect", "/login")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
+func (s *Server) serveTOTPForm(w http.ResponseWriter, r *http.Request, challenge, username, next, message string) {
 	data := totpData{
 		CSRF:      csrfFrom(r),
 		Challenge: challenge,
@@ -208,53 +214,71 @@ func (s *Server) handleLoginTOTPSubmit(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(r.FormValue("code"))
 	next := safeNext(r.FormValue("next"))
 
-	userID, ok := s.App.Auth.FinishTOTPChallenge(challenge)
-	if !ok {
+	restart := func(message string) {
+		s.setFlash(w, "err", message)
 		if isHTMX(r) {
-			s.setFlash(w, "err", "That sign-in expired — please sign in again.")
 			w.Header().Set("HX-Redirect", "/login")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		s.setFlash(w, "err", "That sign-in expired — please sign in again.")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
 	}
 
+	userID, ok := s.App.Auth.PeekTOTPChallenge(challenge)
+	if !ok {
+		restart("That sign-in expired — please sign in again.")
+		return
+	}
 	user, err := s.App.DB.GetUser(userID)
 	if err != nil {
-		if isHTMX(r) {
-			s.setFlash(w, "err", "That sign-in expired — please sign in again.")
-			w.Header().Set("HX-Redirect", "/login")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		s.setFlash(w, "err", "That sign-in expired — please sign in again.")
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		restart("That sign-in expired — please sign in again.")
 		return
 	}
 
-	if !user.TOTPEnabled || !auth.VerifyTOTPCode(user.TOTPSecret, code) {
-		s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "from "+clientIP(r), errors.New("invalid code"))
-		if isHTMX(r) {
-			s.serveTOTPForm(w, r, user.ID, user.Username, next, "Incorrect code. Try the current code from your app.")
-			return
-		}
-		if err := s.Renderer.RenderStandalone(w, "templates/login.html", "totp_page", totpData{
-			Title:     "Two-factor authentication",
-			CSRF:      csrfFrom(r),
-			Challenge: mustBeginChallenge(s, user.ID, w, r),
-			Username:  user.Username,
-			Next:      next,
-			Error:     "Incorrect code. Try the current code from your app.",
-		}); err != nil {
-			s.log.Error("render totp page", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+	usedRecovery, err := s.App.Auth.VerifySecondFactor(challenge, user.ID, user.TOTPSecret, user.TOTPEnabled, code)
+	if err != nil {
+		s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "from "+s.clientIP(r), err)
+
+		var lockout *auth.LockoutError
+		switch {
+		case errors.Is(err, auth.ErrInvalidCode):
+			message := "Incorrect code. Try the current code from your app, or a recovery code."
+			if isHTMX(r) {
+				s.serveTOTPForm(w, r, challenge, user.Username, next, message)
+				return
+			}
+			if err := s.Renderer.RenderStandalone(w, "templates/login.html", "totp_page", totpData{
+				Title:     "Two-factor authentication",
+				CSRF:      csrfFrom(r),
+				Challenge: challenge,
+				Username:  user.Username,
+				Next:      next,
+				Error:     message,
+			}); err != nil {
+				s.log.Error("render totp page", "err", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+		case errors.As(err, &lockout):
+			restart(lockout.Error())
+		case errors.Is(err, auth.ErrChallengeExhausted):
+			restart("Too many incorrect codes — please sign in again.")
+		default:
+			restart("That sign-in expired — please sign in again.")
 		}
 		return
 	}
 
-	token, err := s.App.Auth.OpenSession(user, clientIP(r), r.UserAgent())
+	if usedRecovery {
+		s.App.Activity.Record(user.Username, "Sign in with recovery code", "",
+			strconv.Itoa(s.App.Auth.RecoveryCodesLeft(user.ID))+" left", nil)
+	}
+
+	if !sso.PasswordAllowed(user.AuthMethod) {
+		s.denyPasswordSignIn(w, r, user.Username, "Sign in (2FA)")
+		return
+	}
+
+	token, err := s.App.Auth.OpenSession(user, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if isHTMX(r) {
 			s.serveLoginFlash(w, "Sign-in failed: "+err.Error())
@@ -265,20 +289,7 @@ func (s *Server) handleLoginTOTPSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "from "+clientIP(r), nil)
-	if !sso.PasswordAllowed(user.AuthMethod) {
-		// Closed the loop opened at the password step: SSO-only accounts
-		// cannot finish a password sign-in even with a valid TOTP code.
-		_ = s.App.Auth.Logout(token)
-		s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "account uses single sign-on", errors.New("password sign-in disabled"))
-		if isHTMX(r) {
-			s.serveLoginFlash(w, "This account uses single sign-on — use a sign-in button below.")
-			return
-		}
-		s.setFlash(w, "err", "This account uses single sign-on — use a sign-in button below.")
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
+	s.App.Activity.Record(user.Username, "Sign in (2FA)", "", "from "+s.clientIP(r), nil)
 	if isHTMX(r) {
 		s.setSessionCookie(w, token)
 		target := next
@@ -292,15 +303,17 @@ func (s *Server) handleLoginTOTPSubmit(w http.ResponseWriter, r *http.Request) {
 	s.finishPasswordLogin(w, r, token, user.Username, next)
 }
 
-// mustBeginChallenge issues a replacement challenge after a wrong code so the
-// form stays usable. The old challenge was already consumed.
-func mustBeginChallenge(s *Server, userID int64, w http.ResponseWriter, r *http.Request) string {
-	challenge, err := s.App.Auth.BeginTOTPChallenge(userID)
-	if err != nil {
-		s.setFlash(w, "err", "Sign-in failed: "+err.Error())
-		return ""
+// denyPasswordSignIn refuses a password sign-in for an account that is limited
+// to single sign-on.
+func (s *Server) denyPasswordSignIn(w http.ResponseWriter, r *http.Request, username, action string) {
+	const message = "This account uses single sign-on — use a sign-in button below."
+	s.App.Activity.Record(username, action, "", "account uses single sign-on", errors.New("password sign-in disabled"))
+	if isHTMX(r) {
+		s.serveLoginFlash(w, message)
+		return
 	}
-	return challenge
+	s.setFlash(w, "err", message)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 // finishPasswordLogin stores the session cookie and lands on next (or /).
@@ -357,25 +370,13 @@ func safeNext(next string) string {
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		return ""
 	}
+	// Browsers read a backslash as a slash, and strip tabs and newlines, so
+	// "/\evil.example" and "/\t/evil.example" both leave the site.
+	if strings.ContainsAny(next, "\\\t\r\n") {
+		return ""
+	}
 	if u, err := url.Parse(next); err != nil || u.Host != "" {
 		return ""
 	}
 	return next
-}
-
-// clientIP extracts the caller address, trusting the reverse proxy headers the
-// console's own Caddy sets.
-func clientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		if first, _, ok := strings.Cut(forwarded, ","); ok {
-			return strings.TrimSpace(first)
-		}
-		return strings.TrimSpace(forwarded)
-	}
-
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return host
 }

@@ -86,10 +86,12 @@
         <dl class="kv">
           <dt>Status</dt>
           <dd>{{if .CaddyEnabled}}<span class="pill pill-ok">managed by the console</span>{{else}}<span class="pill pill-warn">not managed</span>{{end}}</dd>
+          {{if canAdmin .User}}
           <dt>Config path</dt>
           <dd class="mono">{{if .CaddyPath}}{{.CaddyPath}}{{else}}—{{end}}</dd>
           <dt>Admin API</dt>
           <dd class="mono">{{if .CaddyAdmin}}{{.CaddyAdmin}}{{else}}—{{end}}</dd>
+          {{end}}
         </dl>
       </div>
     </div>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,8 +135,21 @@ func (s *Service) EnqueueCreate(username string, req CreateRequest) (*models.Job
 		return nil, err
 	}
 
+	// The quota check and the enqueue form one step: without the lock, two
+	// simultaneous requests at the limit would both pass.
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+
 	if _, err := s.app.Incus.Instance(req.Name); err == nil {
 		return nil, ErrNameInUse
+	}
+	if err := s.checkQuota(context.Background()); err != nil {
+		return nil, err
+	}
+	if res, err := s.app.Incus.ServerResources(); err == nil && res != nil {
+		if err := checkCapacity(req, int(res.CPU.Total), int64(res.Memory.Total)); err != nil {
+			return nil, err
+		}
 	}
 
 	payload, err := json.Marshal(createPayload{CreateRequest: req})
@@ -355,18 +369,26 @@ func (s *Service) Start(ctx context.Context, name string) error {
 	return s.app.Incus.Start(ctx, name)
 }
 
-// Stop powers an instance off.
+// Stop shuts an instance down cleanly.
 func (s *Service) Stop(ctx context.Context, name string) error {
 	return s.app.Incus.Stop(ctx, name)
 }
 
-// Restart reboots an instance.
+// ForceStop powers an instance off immediately.
+func (s *Service) ForceStop(ctx context.Context, name string) error {
+	return s.app.Incus.ForceStop(ctx, name)
+}
+
+// Restart reboots an instance cleanly.
 func (s *Service) Restart(ctx context.Context, name string) error {
 	return s.app.Incus.Restart(ctx, name)
 }
 
 // Delete removes an instance, its console metadata and its monitoring history.
 func (s *Service) Delete(ctx context.Context, name string) error {
+	if s.hasActiveJob(name) {
+		return ErrBusy
+	}
 	if err := s.app.Incus.DeleteInstance(ctx, name); err != nil {
 		if incus.IsNotFound(err) {
 			return ErrNotFound
@@ -374,6 +396,10 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 		return err
 	}
 
+	// Before the rows go: the keeper needs them to find offsite copies.
+	if s.archives != nil {
+		s.archives.InstanceDeleted(ctx, name)
+	}
 	s.app.DB.DeleteDomainsForInstance(name)
 	s.app.DB.DeleteSnapshotsForInstance(name)
 	s.app.DB.DeleteBackupsForInstance(name)
@@ -392,6 +418,9 @@ func (s *Service) Rename(ctx context.Context, oldName, newName string) error {
 	}
 	if oldName == newName {
 		return nil
+	}
+	if s.hasActiveJob(oldName) {
+		return ErrBusy
 	}
 
 	if err := s.app.Incus.RenameInstance(ctx, oldName, newName); err != nil {
@@ -419,21 +448,27 @@ func (s *Service) Rename(ctx context.Context, oldName, newName string) error {
 	if err := s.app.DB.RenameBackups(oldName, newName); err != nil {
 		s.app.Log.Warn("could not move backup metadata", "err", err)
 	}
+	if s.archives != nil {
+		s.archives.InstanceRenamed(oldName, newName)
+	}
 
 	s.notifyChanged(ctx, newName)
 	return nil
 }
 
+// Limits is a partial update of an instance's resources. A nil field leaves
+// that resource as it is; a pointer to 0 removes the CPU or memory limit.
+// Disk is grow-only, so 0 is not meaningful there and is treated as unchanged.
+type Limits struct {
+	CPU      *int
+	MemoryMB *int
+	DiskGB   *int
+}
+
 // UpdateLimits applies new CPU, memory and disk limits.
-func (s *Service) UpdateLimits(ctx context.Context, name string, cpu, memoryMB, diskGB int) error {
-	if cpu < 0 || cpu > MaxCPU {
-		return fmt.Errorf("%w: CPU must be between 0 and %d", ErrInvalidSpec, MaxCPU)
-	}
-	if memoryMB < 0 || memoryMB > MaxMemoryMB {
-		return fmt.Errorf("%w: memory must be between 0 and %d MB", ErrInvalidSpec, MaxMemoryMB)
-	}
-	if diskGB < 0 || diskGB > MaxDiskGB {
-		return fmt.Errorf("%w: disk must be between 0 and %d GB", ErrInvalidSpec, MaxDiskGB)
+func (s *Service) UpdateLimits(ctx context.Context, name string, lim Limits) error {
+	if err := lim.validate(); err != nil {
+		return err
 	}
 
 	inst, err := s.app.Incus.Instance(name)
@@ -444,46 +479,10 @@ func (s *Service) UpdateLimits(ctx context.Context, name string, cpu, memoryMB, 
 		return err
 	}
 
-	put := incusapi.InstancePut{
-		Architecture: inst.Architecture,
-		Description:  inst.Description,
-		Profiles:     inst.Profiles,
-		Config:       incusapi.ConfigMap{},
-		Devices:      incusapi.DevicesMap{},
+	put, err := limitsPut(inst, lim)
+	if err != nil {
+		return err
 	}
-	for k, v := range inst.Config {
-		put.Config[k] = v
-	}
-	for k, v := range inst.Devices {
-		put.Devices[k] = v
-	}
-
-	if cpu > 0 {
-		put.Config["limits.cpu"] = fmt.Sprintf("%d", cpu)
-	} else {
-		delete(put.Config, "limits.cpu")
-	}
-
-	if memoryMB > 0 {
-		put.Config["limits.memory"] = fmt.Sprintf("%dMiB", memoryMB)
-	} else {
-		delete(put.Config, "limits.memory")
-	}
-
-	// Disk growth only; shrinking a root device is not possible.
-	if diskGB > 0 {
-		root, ok := put.Devices["root"]
-		if !ok {
-			root = map[string]string{"type": "disk", "path": "/"}
-		}
-		current := incus.ParseBytes(root["size"])
-		if int64(diskGB)<<30 < current {
-			return fmt.Errorf("%w: the root disk cannot be shrunk", ErrInvalidSpec)
-		}
-		root["size"] = fmt.Sprintf("%dGiB", diskGB)
-		put.Devices["root"] = root
-	}
-
 	if err := s.app.Incus.UpdateInstance(ctx, name, put); err != nil {
 		return err
 	}
@@ -492,9 +491,9 @@ func (s *Service) UpdateLimits(ctx context.Context, name string, cpu, memoryMB, 
 	meta := &models.InstanceMeta{
 		Name:        name,
 		Kind:        incus.InstanceKind(*inst),
-		CPU:         cpu,
-		MemoryMB:    memoryMB,
-		DiskGB:      diskGB,
+		CPU:         limitCPU(put),
+		MemoryMB:    int(incus.ParseBytes(put.Config["limits.memory"]) >> 20),
+		DiskGB:      int(incus.ParseBytes(put.Devices["root"]["size"]) >> 30),
 		StoragePool: incus.InstanceStoragePool(*inst),
 		OwnerID:     s.ownerID(name),
 	}
@@ -509,6 +508,85 @@ func (s *Service) UpdateLimits(ctx context.Context, name string, cpu, memoryMB, 
 	}
 
 	return nil
+}
+
+func (l Limits) validate() error {
+	if l.CPU != nil && (*l.CPU < 0 || *l.CPU > MaxCPU) {
+		return fmt.Errorf("%w: CPU must be between 0 and %d", ErrInvalidSpec, MaxCPU)
+	}
+	if l.MemoryMB != nil && (*l.MemoryMB < 0 || *l.MemoryMB > MaxMemoryMB) {
+		return fmt.Errorf("%w: memory must be between 0 and %d MB", ErrInvalidSpec, MaxMemoryMB)
+	}
+	if l.DiskGB != nil && (*l.DiskGB < 0 || *l.DiskGB > MaxDiskGB) {
+		return fmt.Errorf("%w: disk must be between 0 and %d GB", ErrInvalidSpec, MaxDiskGB)
+	}
+	return nil
+}
+
+func limitCPU(put incusapi.InstancePut) int {
+	n, _ := strconv.Atoi(put.Config["limits.cpu"])
+	return n
+}
+
+// limitsPut builds the update for an instance. It starts from the instance's
+// own config and devices; a root disk that comes from a profile is copied into
+// the instance (with its pool and path) before its size is changed, because a
+// bare disk device with no pool is not a usable root.
+func limitsPut(inst *incusapi.Instance, lim Limits) (incusapi.InstancePut, error) {
+	put := incusapi.InstancePut{
+		Architecture: inst.Architecture,
+		Description:  inst.Description,
+		Profiles:     inst.Profiles,
+		Config:       incusapi.ConfigMap{},
+		Devices:      incusapi.DevicesMap{},
+	}
+	for k, v := range inst.Config {
+		put.Config[k] = v
+	}
+	for k, v := range inst.Devices {
+		put.Devices[k] = v
+	}
+
+	if lim.CPU != nil {
+		if *lim.CPU > 0 {
+			put.Config["limits.cpu"] = strconv.Itoa(*lim.CPU)
+		} else {
+			delete(put.Config, "limits.cpu")
+		}
+	}
+	if lim.MemoryMB != nil {
+		if *lim.MemoryMB > 0 {
+			put.Config["limits.memory"] = fmt.Sprintf("%dMiB", *lim.MemoryMB)
+		} else {
+			delete(put.Config, "limits.memory")
+		}
+	}
+
+	if lim.DiskGB != nil && *lim.DiskGB > 0 {
+		root := map[string]string{}
+		source, ok := put.Devices["root"]
+		if !ok {
+			source, ok = inst.ExpandedDevices["root"]
+		}
+		if !ok {
+			return put, fmt.Errorf("%w: the instance has no root disk to resize", ErrInvalidSpec)
+		}
+		for k, v := range source {
+			root[k] = v
+		}
+		current := incus.ParseBytes(root["size"])
+		// The form shows whole GiB (rounded down), so the displayed value of a
+		// 10.5 GiB disk is 10: resubmitting it is a no-op, not a shrink.
+		if int64(*lim.DiskGB) == current>>30 {
+			return put, nil
+		}
+		if int64(*lim.DiskGB)<<30 < current {
+			return put, fmt.Errorf("%w: the root disk cannot be shrunk", ErrInvalidSpec)
+		}
+		root["size"] = fmt.Sprintf("%dGiB", *lim.DiskGB)
+		put.Devices["root"] = root
+	}
+	return put, nil
 }
 
 // defaultStoragePool picks the pool to use when the caller does not choose one.
@@ -579,4 +657,66 @@ func validHostname(host string) bool {
 		}
 	}
 	return true
+}
+
+// hasActiveJob reports whether a queued or running job targets the instance.
+// Deleting or renaming it underneath such a job would make the job fail
+// halfway or write to the wrong place.
+func (s *Service) hasActiveJob(name string) bool {
+	jobs, err := s.app.DB.ListActiveJobs()
+	if err != nil {
+		return false
+	}
+	for _, j := range jobs {
+		if j.Target == name {
+			return true
+		}
+	}
+	return false
+}
+
+// checkQuota refuses a new instance once CONSOLE_MAX_INSTANCES is reached.
+// Instances still being created count, or a burst of requests would slip past.
+func (s *Service) checkQuota(ctx context.Context) error {
+	limit := s.app.Cfg.MaxInstances
+	if limit <= 0 {
+		return nil
+	}
+
+	existing, err := s.app.Incus.Instances(ctx)
+	if err != nil {
+		return fmt.Errorf("could not count existing instances: %w", err)
+	}
+	names := make(map[string]bool, len(existing))
+	for i := range existing {
+		names[existing[i].Name] = true
+	}
+
+	// A queued or running create job may not have an Incus instance yet.
+	if jobs, err := s.app.DB.ListActiveJobs(); err == nil {
+		for _, j := range jobs {
+			if j.Kind == JobCreate {
+				names[j.Target] = true
+			}
+		}
+	}
+
+	if len(names) >= limit {
+		return fmt.Errorf("%w: this console is limited to %d instances", ErrQuota, limit)
+	}
+	return nil
+}
+
+// checkCapacity refuses a single instance that could never run on this host.
+// It is deliberately not a sum over all instances: CPU and memory are
+// routinely overcommitted, so only an impossible request is an error.
+func checkCapacity(req CreateRequest, hostCPUs int, hostMemory int64) error {
+	if hostCPUs > 0 && req.CPU > hostCPUs {
+		return fmt.Errorf("%w: %d vCPUs requested but the host has %d", ErrLimitsTooBig, req.CPU, hostCPUs)
+	}
+	if hostMemory > 0 && int64(req.MemoryMB)<<20 > hostMemory {
+		return fmt.Errorf("%w: %d MB of memory requested but the host has %d MB",
+			ErrLimitsTooBig, req.MemoryMB, hostMemory>>20)
+	}
+	return nil
 }

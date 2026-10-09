@@ -16,6 +16,36 @@ func (d *DB) InsertMetric(m *models.Metric) error {
 	return err
 }
 
+// InsertMetrics stores a whole sampling round in one transaction: one commit
+// (and one fsync) instead of one per instance.
+func (d *DB) InsertMetrics(batch []models.Metric) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO metrics (instance_name, ts, cpu_pct, mem_used, mem_total, disk_used, disk_total, net_rx_bytes, net_tx_bytes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for i := range batch {
+		m := &batch[i]
+		if _, err := stmt.Exec(m.InstanceName, m.TS.UTC().Format(timeLayout), m.CPUPct,
+			m.MemUsed, m.MemTotal, m.DiskUsed, m.DiskTotal, m.NetRxBytes, m.NetTxBytes); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // ListMetrics returns samples for an instance since a point in time, oldest first.
 func (d *DB) ListMetrics(instanceName string, since time.Time) ([]models.Metric, error) {
 	rows, err := d.sql.Query(`

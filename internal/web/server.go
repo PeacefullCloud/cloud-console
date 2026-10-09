@@ -5,11 +5,11 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/peaceful/cloud-console/internal/auth"
@@ -55,6 +55,9 @@ type Server struct {
 	// instead of holding http.Server.Shutdown until its timeout expires.
 	streamCtx   context.Context
 	stopStreams context.CancelFunc
+
+	feedOnce sync.Once
+	jobs     *feed
 }
 
 // New builds the server and registers every route.
@@ -77,17 +80,17 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	// Static assets are served without authentication.
-	mux.Handle("GET /static/", http.StripPrefix("/static/", static))
+	mux.Handle("GET /static/", noDirectoryListing(http.StripPrefix("/static/", static)))
 	mux.Handle("GET /healthz", http.HandlerFunc(s.health))
 
 	// Everything else goes through the full middleware chain.
 	mux.Handle("/", s.mux)
 
-	return s.withLogging(s.withCSRF(s.withAuth(mux)))
+	return s.withSecurityHeaders(s.withLogging(s.withCSRF(s.withAuth(mux))))
 }
 
 func (s *Server) routes() {
-	m := s.mux
+	m := validatedMux{s.mux}
 
 	m.HandleFunc("GET /{$}", s.handleDashboard)
 
@@ -97,6 +100,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /login/totp", s.handleLoginTOTPSubmit)
 	m.HandleFunc("GET /auth/sso/start/{provider}", s.handleSSOStart)
 	m.HandleFunc("GET /auth/sso/callback/{provider}", s.handleSSOCallback)
+	m.HandleFunc("POST /auth/sso/link/{provider}", s.handleSSOLink)
 	m.HandleFunc("POST /logout", s.handleLogout)
 
 	m.HandleFunc("GET /instances", s.handleInstances)
@@ -134,10 +138,15 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /storage", s.handleStorage)
 	m.HandleFunc("GET /networking", s.handleNetworking)
 	m.HandleFunc("GET /activity", s.handleActivity)
+	m.HandleFunc("GET /activity/export.csv", s.handleActivityExport)
+	m.HandleFunc("GET /metrics", s.handleMetrics)
 	m.HandleFunc("GET /settings", s.handleSettings)
 
 	m.HandleFunc("POST /settings/users", s.handleUserCreate)
 	m.HandleFunc("POST /settings/users/{id}/delete", s.handleUserDelete)
+	m.HandleFunc("POST /settings/users/{id}/password", s.handleUserPasswordReset)
+	m.HandleFunc("POST /settings/sessions/{id}/revoke", s.handleSessionRevoke)
+	m.HandleFunc("POST /settings/sessions/revoke-others", s.handleSessionsRevokeOthers)
 	m.HandleFunc("POST /settings/users/{id}/method", s.handleUserMethod)
 	m.HandleFunc("POST /settings/users/{id}/totp/clear", s.handleUserTOTPClear)
 	m.HandleFunc("POST /settings/sso", s.handleProviderSave)
@@ -147,6 +156,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /settings/totp/setup", s.handleTOTPSetup)
 	m.HandleFunc("POST /settings/totp/enable", s.handleTOTPEnable)
 	m.HandleFunc("POST /settings/totp/disable", s.handleTOTPDisable)
+	m.HandleFunc("POST /settings/totp/recovery", s.handleTOTPRecovery)
 
 	m.HandleFunc("GET /jobs/active", s.handleActiveJobs)
 	m.HandleFunc("GET /jobs/stream", s.handleJobsStream)
@@ -182,6 +192,8 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		"/login":      true,
 		"/login/totp": true,
 		"/healthz":    true,
+		// Authenticated by its own bearer token, not by a session.
+		"/metrics": true,
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +307,10 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap lets http.ResponseController reach the real connection, which it
+// needs to clear the write deadline on long-lived streams.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // Flush forwards SSE flushes. Without it, withLogging's wrapper hides the
 // underlying Flusher and GET /jobs/stream fails with 500.
@@ -423,9 +439,14 @@ func (s *Server) redirectBack(w http.ResponseWriter, r *http.Request, fallback s
 
 	if ref := r.Header.Get("Referer"); ref != "" {
 		if u, err := url.Parse(ref); err == nil && (u.Host == "" || u.Host == r.Host) {
-			target = u.Path
+			candidate := u.EscapedPath()
 			if u.RawQuery != "" {
-				target += "?" + u.RawQuery
+				candidate += "?" + u.RawQuery
+			}
+			// A path such as "//evil.example" is a protocol-relative URL to a
+			// browser, so only local-looking targets are followed.
+			if safe := safeNext(candidate); safe != "" {
+				target = safe
 			}
 		}
 	}
@@ -491,11 +512,27 @@ func friendlyError(err error) string {
 	}
 }
 
+// noDirectoryListing makes a file server answer 404 for directories instead of
+// listing their contents. http.FileServer redirects "/static/dir" to
+// "/static/dir/" and lists it, so any path ending in a slash is refused.
+func noDirectoryListing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.App.Incus.Server(); err != nil {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, "incus unreachable: %v\n", err)
+		// The error can carry socket paths and daemon details, and this
+		// endpoint is public, so it goes to the log instead.
+		s.log.Warn("health check: incus unreachable", "err", err)
+		_, _ = w.Write([]byte("incus unreachable\n"))
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

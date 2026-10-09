@@ -16,14 +16,18 @@ func (s *Server) handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Snapshots.Create(r.Context(), name, snapName, note, username)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Snapshots.Create(ctx, name, snapName, note, username)
 	}
 	s.App.Activity.Record(username, "Create snapshot", name, snapName, err)
 
 	if err != nil && strings.Contains(err.Error(), "already exists") {
 		// Retry once with a fresh timestamped name so the button always works.
 		retry := snapshots.SuggestName(timeNow())
-		err = s.Snapshots.Create(r.Context(), name, retry, note, username)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Snapshots.Create(ctx, name, retry, note, username)
 		if err == nil {
 			s.App.Activity.Record(username, "Create snapshot", name, retry, nil)
 			s.succeed(w, r, s.InstanceURL(name)+"?tab=snapshots", "Snapshot "+retry+" created.")
@@ -41,7 +45,9 @@ func (s *Server) handleSnapshotDelete(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Snapshots.Delete(r.Context(), name, snap)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Snapshots.Delete(ctx, name, snap)
 	}
 	s.App.Activity.Record(username, "Delete snapshot", name, snap, err)
 
@@ -55,7 +61,9 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Snapshots.Restore(r.Context(), name, snap)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Snapshots.Restore(ctx, name, snap)
 	}
 	s.App.Activity.Record(username, "Restore snapshot", name, snap, err)
 

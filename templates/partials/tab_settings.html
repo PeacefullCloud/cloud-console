@@ -20,17 +20,17 @@
           <div class="field">
             <label for="cpu">vCPU</label>
             <input id="cpu" name="cpu" type="number" min="0" max="64" value="{{$inst.CPU}}">
-            <p class="hint">0 means unlimited (host default).</p>
+            <p class="hint">0 removes the limit; leave blank to keep it as is.</p>
           </div>
           <div class="field">
             <label for="memory_mb">Memory (MB)</label>
             <input id="memory_mb" name="memory_mb" type="number" min="0" max="1048576" step="128" value="{{mb $inst.MemoryBytes}}">
-            <p class="hint">0 means unlimited.</p>
+            <p class="hint">0 removes the limit; leave blank to keep it as is.</p>
           </div>
           <div class="field">
             <label for="disk_gb">Root disk (GB)</label>
             <input id="disk_gb" name="disk_gb" type="number" min="0" max="10240" value="{{gbNum $inst.DiskBytes}}">
-            <p class="hint">Increase only.</p>
+            <p class="hint">Increase only; leave blank to keep it as is.</p>
           </div>
         </div>
         <button class="btn btn-primary" type="submit">Apply changes</button>

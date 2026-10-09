@@ -11,7 +11,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -28,10 +30,21 @@ type Manager struct {
 	log     *slog.Logger
 	workers int
 
-	mu       sync.RWMutex
-	handlers map[string]Handler
+	mu        sync.RWMutex
+	handlers  map[string]Handler
+	onFailure func(job *models.Job, err error)
 
+	// qmu guards closed so Enqueue during shutdown cannot send on a closed
+	// channel.
+	qmu    sync.RWMutex
+	closed bool
 	queue  chan string
+
+	// locks holds one semaphore per target, so two jobs for the same
+	// instance never run at once.
+	lockMu sync.Mutex
+	locks  map[string]chan struct{}
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -48,6 +61,7 @@ func New(db *database.DB, log *slog.Logger, workers int) *Manager {
 		workers:  workers,
 		handlers: map[string]Handler{},
 		queue:    make(chan string, 256),
+		locks:    map[string]chan struct{}{},
 	}
 }
 
@@ -59,6 +73,23 @@ func (m *Manager) Register(kind string, h Handler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.handlers[kind] = h
+}
+
+// OnFailure installs a callback run after a job ends in failure. It must not
+// block; it runs on the worker.
+func (m *Manager) OnFailure(fn func(job *models.Job, err error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onFailure = fn
+}
+
+func (m *Manager) failed(job *models.Job, err error) {
+	m.mu.RLock()
+	fn := m.onFailure
+	m.mu.RUnlock()
+	if fn != nil {
+		fn(job, err)
+	}
 }
 
 func (m *Manager) handler(kind string) (Handler, bool) {
@@ -73,11 +104,18 @@ func (m *Manager) handler(kind string) (Handler, bool) {
 func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 
-	// Jobs interrupted by a restart cannot be resumed, so mark them failed.
+	// Jobs cut off mid-run cannot be resumed, so mark them failed. Jobs that
+	// never started are requeued below.
 	if n, err := m.db.FailStaleJobs(); err != nil {
 		m.log.Warn("could not reset stale jobs", "err", err)
 	} else if n > 0 {
 		m.log.Info("marked interrupted jobs as failed", "count", n)
+	}
+
+	if n, err := m.db.WipeFinishedJobPayloads(); err != nil {
+		m.log.Warn("could not scrub old job payloads", "err", err)
+	} else if n > 0 {
+		m.log.Info("scrubbed stored payloads of finished jobs", "count", n)
 	}
 
 	for i := 0; i < m.workers; i++ {
@@ -104,7 +142,12 @@ func (m *Manager) Stop() {
 	if m.cancel != nil {
 		m.cancel()
 	}
-	close(m.queue)
+	m.qmu.Lock()
+	if !m.closed {
+		m.closed = true
+		close(m.queue)
+	}
+	m.qmu.Unlock()
 	m.wg.Wait()
 }
 
@@ -136,6 +179,8 @@ func (m *Manager) Enqueue(username, kind, target, payload string) (*models.Job, 
 	}
 
 	if !m.push(id) {
+		// Close the row so it neither lingers as "queued" nor keeps its payload.
+		_ = m.db.FinishJob(id, "failed", "Failed", "job queue is full")
 		return nil, errors.New("job queue is full")
 	}
 
@@ -164,6 +209,11 @@ func (m *Manager) WipePayload(jobID string) {
 }
 
 func (m *Manager) push(id string) bool {
+	m.qmu.RLock()
+	defer m.qmu.RUnlock()
+	if m.closed {
+		return false
+	}
 	select {
 	case m.queue <- id:
 		return true
@@ -207,6 +257,14 @@ func (m *Manager) run(id string) {
 		return
 	}
 
+	// Wait for any earlier job on the same instance. A shutdown while waiting
+	// leaves the job queued, so the next start runs it.
+	release, err := m.acquire(job.Target)
+	if err != nil {
+		return
+	}
+	defer release()
+
 	if err := m.db.StartJob(id); err != nil {
 		m.log.Error("could not start job", "job", id, "err", err)
 		return
@@ -219,14 +277,51 @@ func (m *Manager) run(id string) {
 	ctx, cancel := context.WithTimeout(m.ctx, 60*time.Minute)
 	defer cancel()
 
-	if err := h(ctx, job); err != nil {
+	if err := m.call(ctx, h, job); err != nil {
 		m.log.Error("job failed", "job", id, "kind", job.Kind, "err", err, "took", time.Since(started))
 		_ = m.db.FinishJob(id, "failed", "Failed", err.Error())
+		job.Payload = "" // never let a password reach a callback
+		m.failed(job, err)
 		return
 	}
 
 	m.log.Info("job finished", "job", id, "kind", job.Kind, "took", time.Since(started))
 	_ = m.db.FinishJob(id, "done", "Completed", "")
+}
+
+// call runs a handler and turns a panic into an ordinary failure. Without it
+// one bad job would crash the whole console, and on restart the job would sit
+// in "running" until the next start marked it failed.
+func (m *Manager) call(ctx context.Context, h Handler, job *models.Job) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.log.Error("job panicked", "job", job.ID, "kind", job.Kind, "panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("internal error: %v", r)
+		}
+	}()
+	return h(ctx, job)
+}
+
+// acquire serialises jobs per target. The returned func releases the slot.
+func (m *Manager) acquire(target string) (func(), error) {
+	if target == "" {
+		return func() {}, nil
+	}
+
+	m.lockMu.Lock()
+	sem, ok := m.locks[target]
+	if !ok {
+		sem = make(chan struct{}, 1)
+		m.locks[target] = sem
+	}
+	m.lockMu.Unlock()
+
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, nil
+	case <-m.ctx.Done():
+		return nil, m.ctx.Err()
+	}
 }
 
 func newID() (string, error) {

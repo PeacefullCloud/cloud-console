@@ -3,6 +3,22 @@
 (function () {
   "use strict";
 
+  // Inline event handlers are blocked by the page's Content-Security-Policy,
+  // so the two things they did live here.
+  document.addEventListener("click", function (event) {
+    var field = event.target.closest("input[data-select-on-click]");
+    if (field) {
+      field.select();
+    }
+  });
+
+  document.addEventListener("htmx:afterRequest", function (event) {
+    var form = event.target;
+    if (form && form.matches && form.matches("form[data-reset-after-request]")) {
+      form.reset();
+    }
+  });
+
   // Sidebar toggle on narrow screens.
   document.addEventListener("click", function (event) {
     var toggle = event.target.closest("#sidebar-toggle");

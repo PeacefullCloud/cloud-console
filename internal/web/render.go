@@ -222,7 +222,7 @@ func (r *Renderer) funcMap() template.FuncMap {
 		"join":       strings.Join,
 		// ssoBlank is an empty provider for the add-provider form.
 		"ssoBlank": func() sso.ProviderView {
-			return sso.ProviderView{DefaultRole: auth.RoleViewer, RequireMFA: true, Enabled: true}
+			return sso.ProviderView{DefaultRole: auth.RoleViewer, RequireMFA: true, Enabled: true, Provisioning: sso.ProvisionLinkOnly}
 		},
 	}
 }

@@ -148,7 +148,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	// Blank out everything the assertions below depend on, so a developer's
 	// own shell environment cannot influence the result.
 	for _, key := range []string{
-		"CONSOLE_ENV_FILE", "CONSOLE_DATA_DIR", "CONSOLE_ADDR", "INCUS_SOCKET",
+		"CONSOLE_ENV_FILE", "CONSOLE_DATA_DIR", "CONSOLE_ADDR", "CONSOLE_BASE_URL", "CONSOLE_SECURE_COOKIES", "INCUS_SOCKET",
 		"S3_REGION", "S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY",
 		"CONSOLE_METRICS_INTERVAL", "CONSOLE_METRICS_RETENTION_HOURS",
 	} {
@@ -161,8 +161,11 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Addr != ":8080" {
-		t.Errorf("Addr = %q, want \":8080\"", cfg.Addr)
+	if cfg.Addr != "127.0.0.1:8080" {
+		t.Errorf("Addr = %q, want loopback by default", cfg.Addr)
+	}
+	if cfg.SecureCookies {
+		t.Error("an http base URL must not force Secure cookies")
 	}
 	if cfg.IncusSocket != DefaultIncusSocket {
 		t.Errorf("IncusSocket = %q, want %q", cfg.IncusSocket, DefaultIncusSocket)
@@ -179,5 +182,101 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	// Values below their minimum must be clamped up.
 	if cfg.MetricsIntervalSeconds < 10 {
 		t.Errorf("MetricsIntervalSeconds = %d, want at least 10", cfg.MetricsIntervalSeconds)
+	}
+}
+
+func TestParseTrustedProxies(t *testing.T) {
+	got, err := ParseTrustedProxies(" 10.0.0.0/8, 192.0.2.7 ,::1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"10.0.0.0/8", "192.0.2.7/32", "::1/128"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].String() != want[i] {
+			t.Errorf("entry %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+
+	for _, empty := range []string{"", "none", " NONE "} {
+		if got, err := ParseTrustedProxies(empty); err != nil || len(got) != 0 {
+			t.Errorf("%q: got %v, %v; want no proxies", empty, got, err)
+		}
+	}
+
+	if _, err := ParseTrustedProxies("10.0.0.0/8,example.com"); err == nil {
+		t.Error("a hostname must be rejected")
+	}
+}
+
+func TestSecureCookiesFollowHTTPSBaseURL(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("CONSOLE_ENV_FILE", "")
+	t.Setenv("CONSOLE_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("CONSOLE_BASE_URL", "https://console.example.com")
+	t.Setenv("CONSOLE_SECURE_COOKIES", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SecureCookies {
+		t.Error("an https base URL should turn Secure cookies on by default")
+	}
+
+	t.Setenv("CONSOLE_SECURE_COOKIES", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SecureCookies {
+		t.Error("an explicit false must win")
+	}
+	if len(cfg.Warnings()) == 0 {
+		t.Error("https with insecure cookies should warn")
+	}
+}
+
+func TestWarnings(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want int
+	}{
+		{"loopback behind proxy", Config{Addr: "127.0.0.1:8080", BaseURL: "https://c.example.com", SecureCookies: true}, 0},
+		{"plain http on loopback", Config{Addr: "127.0.0.1:8080", BaseURL: "http://localhost:8080"}, 0},
+		{"localhost name", Config{Addr: "localhost:8080", BaseURL: "http://localhost:8080"}, 0},
+		{"ipv6 loopback", Config{Addr: "[::1]:8080", BaseURL: "http://localhost:8080"}, 0},
+		{"all interfaces over http", Config{Addr: ":8080", BaseURL: "http://localhost:8080"}, 1},
+		{"public ip over http", Config{Addr: "0.0.0.0:8080", BaseURL: "http://x"}, 1},
+		{"https without secure cookies", Config{Addr: "127.0.0.1:8080", BaseURL: "https://c.example.com"}, 1},
+	}
+	for _, tc := range tests {
+		if got := len(tc.cfg.Warnings()); got != tc.want {
+			t.Errorf("%s: %d warnings %v, want %d", tc.name, got, tc.cfg.Warnings(), tc.want)
+		}
+	}
+}
+
+func TestSnapshotScheduleDefaultsAndClamping(t *testing.T) {
+	t.Setenv("CONSOLE_DATA_DIR", t.TempDir())
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SnapshotIntervalHours != 0 || cfg.SnapshotKeep != 7 {
+		t.Errorf("defaults = %d/%d, want off/7", cfg.SnapshotIntervalHours, cfg.SnapshotKeep)
+	}
+
+	t.Setenv("CONSOLE_SNAPSHOT_INTERVAL_HOURS", "-5")
+	t.Setenv("CONSOLE_SNAPSHOT_KEEP", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SnapshotIntervalHours != 0 || cfg.SnapshotKeep != 1 {
+		t.Errorf("clamped = %d/%d, want 0/1", cfg.SnapshotIntervalHours, cfg.SnapshotKeep)
 	}
 }

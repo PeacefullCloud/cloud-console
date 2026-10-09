@@ -305,12 +305,20 @@ type settingsData struct {
 	SessionCount int
 	SessionTTL   int
 
+	// Sessions lists the signed-in user's own browsers.
+	Sessions []sessionView
+
 	// Two-factor state for the signed-in user, plus a pending setup secret
 	// shown once right after generation.
 	TOTPEnabled     bool
 	TOTPSetupSecret string
 	TOTPSetupURL    string
 	TOTPSetupQR     string // data-URI PNG of the setup URL, for scanning
+
+	// RecoveryLeft counts unused recovery codes; RecoveryCodes is set only in
+	// the response that generates them, the one time they can be read.
+	RecoveryLeft  int
+	RecoveryCodes []string
 
 	MetricsInterval  int
 	MetricsRetention int
@@ -323,6 +331,11 @@ type settingsData struct {
 	// identities (user id → provider names) for the users list.
 	Providers []sso.ProviderView
 	Links     map[int64][]string
+
+	// Enabled providers the signed-in user may link to their own account,
+	// and which of them are already linked (provider id → true).
+	LinkProviders []sso.ProviderView
+	MyLinks       map[int64]bool
 
 	// SSOKeySet reports whether CONSOLE_SSO_KEY is configured, gating the
 	// client-secret field in the provider form.
@@ -357,6 +370,23 @@ type ssoFragmentData struct {
 }
 
 // totpFragmentData is the HTMX context for the two-factor card.
+// sessionView is one entry of the "Signed-in devices" card.
+type sessionView struct {
+	ID        string
+	IP        string
+	Device    string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	Current   bool
+}
+
+type sessionsFragmentData struct {
+	CSRF     string
+	Error    string
+	Notice   string
+	Sessions []sessionView
+}
+
 type totpFragmentData struct {
 	CSRF   string
 	Error  string
@@ -366,6 +396,9 @@ type totpFragmentData struct {
 	TOTPSetupSecret string
 	TOTPSetupURL    string
 	TOTPSetupQR     string
+
+	RecoveryLeft  int
+	RecoveryCodes []string
 }
 
 type loginData struct {

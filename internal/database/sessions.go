@@ -70,3 +70,81 @@ func (d *DB) CountSessions() (int, error) {
 		time.Now().UTC().Format(timeLayout)).Scan(&n)
 	return n, err
 }
+
+// Session is one signed-in browser of a user. ID is a short, non-secret
+// handle derived from the stored token hash so it can be shown and posted
+// without exposing anything usable for authentication.
+type Session struct {
+	ID        string
+	IP        string
+	UserAgent string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	hash      string
+}
+
+// Hash returns the stored token hash, used to recognise the current session.
+func (s Session) Hash() string { return s.hash }
+
+// sessionHandleLen is the number of token-hash characters used as a handle.
+const sessionHandleLen = 16
+
+// SessionHandle returns the public handle for a stored token hash.
+func SessionHandle(tokenHash string) string {
+	if len(tokenHash) > sessionHandleLen {
+		return tokenHash[:sessionHandleLen]
+	}
+	return tokenHash
+}
+
+// ListUserSessions returns the live sessions of a user, newest first.
+func (d *DB) ListUserSessions(userID int64) ([]Session, error) {
+	rows, err := d.sql.Query(`
+		SELECT token_hash, COALESCE(ip, ''), COALESCE(user_agent, ''), created_at, expires_at
+		FROM sessions WHERE user_id = ? AND expires_at > ?
+		ORDER BY created_at DESC, rowid DESC`,
+		userID, time.Now().UTC().Format(timeLayout))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Session
+	for rows.Next() {
+		var s Session
+		var created, expires any
+		if err := rows.Scan(&s.hash, &s.IP, &s.UserAgent, &created, &expires); err != nil {
+			return nil, err
+		}
+		s.ID = SessionHandle(s.hash)
+		s.CreatedAt = parseTime(created)
+		s.ExpiresAt = parseTime(expires)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUserSessionByHandle revokes one session, but only if it belongs to
+// the given user, so a handle cannot be used against someone else's session.
+func (d *DB) DeleteUserSessionByHandle(userID int64, handle string) (bool, error) {
+	if len(handle) < sessionHandleLen {
+		return false, nil
+	}
+	res, err := d.sql.Exec(
+		`DELETE FROM sessions WHERE user_id = ? AND substr(token_hash, 1, ?) = ?`,
+		userID, sessionHandleLen, handle)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeleteOtherUserSessions signs a user out everywhere except one session.
+func (d *DB) DeleteOtherUserSessions(userID int64, keepHash string) (int64, error) {
+	res, err := d.sql.Exec(`DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepHash)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

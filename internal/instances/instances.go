@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	incusapi "github.com/lxc/incus/v6/shared/api"
@@ -27,6 +28,8 @@ var (
 	ErrInvalidSpec  = errors.New("invalid resource specification")
 	ErrNameInUse    = errors.New("an instance with that name already exists")
 	ErrLimitsTooBig = errors.New("requested resources exceed host capacity")
+	ErrQuota        = errors.New("instance limit reached")
+	ErrBusy         = errors.New("a background job is still running for this instance — wait for it to finish")
 )
 
 // namePattern matches DNS-safe Incus instance names.
@@ -37,10 +40,22 @@ type Notifier interface {
 	InstanceChanged(ctx context.Context, name string)
 }
 
+// ArchiveKeeper owns data kept outside Incus that is filed under an instance
+// name (the backups service). It is told when that name changes or goes away.
+type ArchiveKeeper interface {
+	InstanceRenamed(oldName, newName string)
+	InstanceDeleted(ctx context.Context, name string)
+}
+
 // Service manages instances.
 type Service struct {
 	app      *core.App
 	notifier Notifier
+	archives ArchiveKeeper
+
+	imageLabels imageLabelCache
+
+	createMu sync.Mutex
 }
 
 // New creates the instance service.
@@ -50,6 +65,10 @@ func New(app *core.App) *Service {
 
 // SetNotifier installs the change hook (the domains service).
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
+
+// SetArchiveKeeper installs the hook that keeps backup archives in step with
+// renames and deletes.
+func (s *Service) SetArchiveKeeper(k ArchiveKeeper) { s.archives = k }
 
 // Instance is the view model used by templates.
 type Instance struct {
@@ -250,10 +269,7 @@ func (s *Service) merge(full *incusapi.InstanceFull, meta map[string]models.Inst
 		if alias, ok := inst.Config["image.os"]; ok && alias != "" {
 			view.ImageLabel = alias
 		} else {
-			view.ImageLabel = "Unknown image"
-			if img, _, err := s.app.Incus.SDK().GetImage(inst.Config["volatile.base_image"]); err == nil && img != nil {
-				view.ImageLabel = img.Properties["description"]
-			}
+			view.ImageLabel = s.imageLabels.get(inst.Config["volatile.base_image"], s.lookupImageLabel)
 		}
 	}
 
@@ -395,4 +411,17 @@ func (s *Service) ensureMetaExists(ctx context.Context, name string) error {
 		DiskGB:      int(incus.InstanceDiskBytes(inst) >> 30),
 		StoragePool: incus.InstanceStoragePool(inst),
 	})
+}
+
+// lookupImageLabel asks Incus for an image's description. It is one API call,
+// so imageLabelCache keeps it from running once per instance per page view.
+func (s *Service) lookupImageLabel(fingerprint string) string {
+	if fingerprint == "" {
+		return "Unknown image"
+	}
+	img, _, err := s.app.Incus.SDK().GetImage(fingerprint)
+	if err != nil || img == nil || img.Properties["description"] == "" {
+		return "Unknown image"
+	}
+	return img.Properties["description"]
 }

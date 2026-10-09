@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/peaceful/cloud-console/internal/activity"
+	"github.com/peaceful/cloud-console/internal/alerts"
 	"github.com/peaceful/cloud-console/internal/auth"
 	"github.com/peaceful/cloud-console/internal/backups"
 	"github.com/peaceful/cloud-console/internal/caddy"
@@ -33,6 +34,7 @@ import (
 	"github.com/peaceful/cloud-console/internal/instances"
 	"github.com/peaceful/cloud-console/internal/jobs"
 	"github.com/peaceful/cloud-console/internal/monitoring"
+	"github.com/peaceful/cloud-console/internal/secrets"
 	"github.com/peaceful/cloud-console/internal/snapshots"
 	"github.com/peaceful/cloud-console/internal/sso"
 	"github.com/peaceful/cloud-console/internal/web"
@@ -79,6 +81,9 @@ func run() error {
 	if *addr != "" {
 		cfg.Addr = *addr
 	}
+	for _, warning := range cfg.Warnings() {
+		log.Warn(warning)
+	}
 	if *socket != "" {
 		cfg.IncusSocket = *socket
 	}
@@ -96,6 +101,18 @@ func run() error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+
+	secretKey, err := secrets.LoadKey(cfg.SecretKey, cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("load secret key: %w", err)
+	}
+	sealer, err := secrets.New(secretKey)
+	if err != nil {
+		return fmt.Errorf("secret key: %w", err)
+	}
+	if err := db.SetSealer(sealer); err != nil {
+		return fmt.Errorf("encrypt stored secrets: %w", err)
+	}
 
 	// --- incus ------------------------------------------------------------
 
@@ -122,9 +139,7 @@ func run() error {
 	if password, err := authService.EnsureAdmin(); err != nil {
 		return fmt.Errorf("create bootstrap administrator: %w", err)
 	} else if password != "" {
-		log.Warn("created the initial administrator account",
-			"username", cfg.AdminUser, "password", password,
-			"note", "store this now and change it after signing in")
+		announceAdminPassword(cfg, log, password)
 	}
 
 	caddyManager := caddy.New(cfg, log)
@@ -133,6 +148,12 @@ func run() error {
 	}
 
 	jobManager := jobs.New(db, log, *workers)
+	if notifier, err := alerts.New(cfg.AlertWebhookURL, log); err != nil {
+		log.Warn("failure alerts are off", "err", err)
+	} else if notifier != nil {
+		jobManager.OnFailure(notifier.JobFailed)
+		log.Info("failure alerts go to the configured webhook")
+	}
 
 	app := &core.App{
 		Cfg:      cfg,
@@ -155,6 +176,7 @@ func run() error {
 	// Caddy is re-rendered whenever instances or domains change.
 	instancesService.SetNotifier(domainsService)
 	backupsService.SetNotifier(domainsService)
+	instancesService.SetArchiveKeeper(backupsService)
 
 	instancesService.RegisterJobHandlers()
 	backupsService.RegisterJobHandlers()
@@ -206,6 +228,11 @@ func run() error {
 	defer jobManager.Stop()
 
 	go monitoringService.Run(ctx)
+	if h := cfg.SnapshotIntervalHours; h > 0 {
+		log.Info("scheduled snapshots enabled", "every_hours", h, "keep", cfg.SnapshotKeep)
+		scheduler := snapshots.NewScheduler(app.Incus, db, log, time.Duration(h)*time.Hour, cfg.SnapshotKeep)
+		go scheduler.Run(ctx)
+	}
 	go housekeeping(ctx, db, log)
 	go reconcile(ctx, domainsService, log)
 
@@ -239,6 +266,26 @@ func run() error {
 	defer cancel()
 
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+// announceAdminPassword hands over a generated bootstrap password without
+// writing it to the log: it goes to a 0600 file, and to the terminal when
+// someone is watching one.
+func announceAdminPassword(cfg *config.Config, log *slog.Logger, password string) {
+	path, err := auth.StoreInitialPassword(cfg.DataDir, cfg.AdminUser, password)
+	if err != nil {
+		// The data directory also holds the database, so this is unlikely.
+		// The terminal copy below is then the only record of the password.
+		log.Error("could not store the initial administrator password", "err", err)
+	} else {
+		log.Warn("created the initial administrator account",
+			"username", cfg.AdminUser, "password_file", path,
+			"note", "read the password from that file, change it after signing in, then delete the file")
+	}
+
+	if info, err := os.Stdout.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		fmt.Printf("\nInitial administrator\n  username: %s\n  password: %s\n\n", cfg.AdminUser, password)
+	}
 }
 
 // assetSources returns the template file system and the static file handler.

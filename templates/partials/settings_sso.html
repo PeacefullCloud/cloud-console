@@ -35,7 +35,7 @@
       </div>
       <div class="snap-meta">{{.Issuer}}</div>
       <div class="snap-meta mono" style="word-break:break-all">callback {{.CallbackURL}}</div>
-      <div class="snap-meta">new accounts join as {{.DefaultRole}}{{if not .HasSecret}} · <span style="color:var(--red)">missing secret</span>{{end}}</div>
+      <div class="snap-meta">{{if eq .Provisioning "open"}}anyone the provider signs in gets an account as {{.DefaultRole}}{{else if eq .Provisioning "domains"}}new {{.DefaultRole}} accounts for {{.AllowedDomains}}{{else}}existing, linked accounts only{{end}}{{if not .HasSecret}} · <span style="color:var(--red)">missing secret</span>{{end}}</div>
     </div>
     <div class="row-tight">
       <form method="post" action="/settings/sso/{{.ID}}/toggle"
@@ -91,6 +91,19 @@
   <div class="field">
     <label>Button label (optional)</label>
     <input name="button_label" type="text" maxlength="64" value="{{$pv.ButtonLabel}}" placeholder="Google">
+  </div>
+  <div class="field">
+    <label>Who gets an account</label>
+    <select name="provisioning">
+      <option value="link_only" {{if eq $pv.Provisioning "link_only"}}selected{{end}}>Linked accounts only — nobody is created automatically</option>
+      <option value="domains" {{if eq $pv.Provisioning "domains"}}selected{{end}}>Verified emails at the domains below</option>
+      <option value="open" {{if eq $pv.Provisioning "open"}}selected{{end}}>Anyone the provider signs in</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Allowed email domains</label>
+    <input name="allowed_domains" type="text" value="{{$pv.AllowedDomains}}" placeholder="example.com, example.org">
+    <p class="hint">Used by the domain policy. The provider must mark the email as verified.</p>
   </div>
   <div class="field">
     <label>Role for new accounts</label>

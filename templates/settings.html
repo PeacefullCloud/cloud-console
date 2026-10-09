@@ -13,6 +13,7 @@
   <div class="split">
     <div class="split-main">
 
+      {{if canAdmin .User}}
       <div class="card">
         <div class="card-head">
           <div class="grow">
@@ -101,11 +102,13 @@ S3_USE_SSL=true</pre>
           </div>
         </details>
       </div>
+      {{end}}
 
     </div>
 
     <div class="split-side">
 
+      {{if canAdmin .User}}
       <div class="card">
         <div class="card-head">
           <div class="grow"><div class="card-title">Console users</div></div>
@@ -119,7 +122,7 @@ S3_USE_SSL=true</pre>
           <div class="disclosure-body">
             <form method="post" action="/settings/users"
                   hx-post="/settings/users" hx-target="#users-list" hx-swap="outerHTML"
-                  hx-disabled-elt="find button" hx-on::after-request="this.reset()">
+                  hx-disabled-elt="find button" data-reset-after-request>
               <input type="hidden" name="csrf_token" value="{{.CSRF}}">
               <div class="field">
                 <label for="new_username">Username</label>
@@ -143,6 +146,7 @@ S3_USE_SSL=true</pre>
         </details>
         {{end}}
       </div>
+      {{end}}
 
       {{if canAdmin .User}}
       {{template "sso_card" .}}
@@ -167,12 +171,35 @@ S3_USE_SSL=true</pre>
 
       {{template "totp_card" .}}
 
+      {{template "sessions_card" .}}
+
+      {{if .LinkProviders}}
+      <div class="card">
+        <div class="card-head"><div class="grow"><div class="card-title">Linked sign-in</div></div></div>
+        <p class="hint">Link a provider to your account to sign in with it. An account is never linked automatically, even when the names match.</p>
+        {{range .LinkProviders}}
+        <div class="snap-row" style="padding:9px 0">
+          <div class="grow"><div class="snap-name" style="font-size:13px">{{.Name}}</div></div>
+          {{if index $.MyLinks .ID}}
+          <span class="pill pill-ok">linked</span>
+          {{else}}
+          <form method="post" action="/auth/sso/link/{{.ID}}" class="row-tight">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            {{if ne $.User.AuthMethod "sso"}}<input name="current_password" type="password" placeholder="Current password" aria-label="Current password" required>{{end}}
+            <button class="btn btn-sm" type="submit">Link</button>
+          </form>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
       <div class="card">
         <div class="card-head"><div class="grow"><div class="card-title">Session</div></div></div>
         <dl class="kv">
           <dt>Signed in as</dt><dd class="strong">{{.User.Username}}</dd>
           <dt>Role</dt><dd>{{.User.Role}}</dd>
-          <dt>Active sessions</dt><dd>{{.SessionCount}}</dd>
+          {{if canAdmin .User}}<dt>Active sessions</dt><dd>{{.SessionCount}}</dd>{{end}}
           <dt>Session lifetime</dt><dd>{{.SessionTTL}} hours</dd>
         </dl>
         <form method="post" action="/logout" class="mt-16">

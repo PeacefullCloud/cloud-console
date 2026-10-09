@@ -32,6 +32,8 @@ type Client struct {
 	socket  string
 	project string
 	log     *slog.Logger
+
+	list instanceListCache
 }
 
 // Connect dials the local incusd over its Unix socket.
@@ -192,8 +194,16 @@ func (c *Client) ImageAliases() ([]api.ImageAliasesEntry, error) {
 // --- Instances ------------------------------------------------------------
 
 // Instances returns every instance together with its live state.
+//
+// The result is shared: a page render, the job stream and the metrics sampler
+// all ask for it, and each call is a full state query for every instance. It
+// is cached for a couple of seconds, concurrent callers share one query, and
+// any operation that changes an instance drops it. Callers must not modify
+// the returned slice or its elements.
 func (c *Client) Instances(ctx context.Context) ([]api.InstanceFull, error) {
-	return c.srv.GetInstancesFull(api.InstanceTypeAny)
+	return c.list.get(instanceListTTL, func() ([]api.InstanceFull, error) {
+		return c.srv.GetInstancesFull(api.InstanceTypeAny)
+	})
 }
 
 // Instance returns a single instance.
@@ -271,14 +281,52 @@ func (c *Client) Start(ctx context.Context, name string) error {
 	return c.SetState(ctx, name, "start", false, 5*time.Minute)
 }
 
-// Stop shuts an instance down, forcing it after the timeout expires.
+// gracefulTimeout is how long a clean shutdown or reboot may take before the
+// console gives up and offers a forced stop instead.
+const gracefulTimeout = 2 * time.Minute
+
+// ErrNotShutDown means the instance ignored a clean shutdown request. The
+// console never escalates to a hard power-off by itself: killing a database or
+// a filesystem mid-write is the user's call.
+var ErrNotShutDown = errors.New("the instance did not shut down cleanly in time; use Force stop to power it off")
+
+// Stop asks the guest to shut down cleanly. It does not kill the instance.
 func (c *Client) Stop(ctx context.Context, name string) error {
-	return c.SetState(ctx, name, "stop", true, 2*time.Minute)
+	return gracefulChange(ctx, func(timeout time.Duration) error {
+		return c.SetState(ctx, name, "stop", false, timeout)
+	}, func() bool { return c.running(name) })
 }
 
-// Restart restarts an instance.
+// Restart reboots the guest cleanly. It does not kill the instance.
 func (c *Client) Restart(ctx context.Context, name string) error {
-	return c.SetState(ctx, name, "restart", true, 5*time.Minute)
+	return gracefulChange(ctx, func(timeout time.Duration) error {
+		return c.SetState(ctx, name, "restart", false, timeout)
+	}, func() bool { return c.running(name) })
+}
+
+// ForceStop powers the instance off immediately, like pulling the plug.
+func (c *Client) ForceStop(ctx context.Context, name string) error {
+	return c.SetState(ctx, name, "stop", true, 30*time.Second)
+}
+
+// running reports whether Incus currently sees the instance as running.
+func (c *Client) running(name string) bool {
+	state, _, err := c.srv.GetInstanceState(name)
+	return err == nil && state.Status == "Running"
+}
+
+// gracefulChange runs a clean state change. When it fails while the caller is
+// still waiting and the instance is still up, the failure is reported as
+// ErrNotShutDown so the UI can point at Force stop.
+func gracefulChange(ctx context.Context, change func(timeout time.Duration) error, stillRunning func() bool) error {
+	err := change(gracefulTimeout)
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	if stillRunning() {
+		return fmt.Errorf("%w (%v)", ErrNotShutDown, err)
+	}
+	return err
 }
 
 // DeleteInstance removes an instance and all of its snapshots.
@@ -479,6 +527,9 @@ func (c *Client) Events() (*incusclient.EventListener, error) {
 
 // wait blocks on an Incus operation until it completes or the context ends.
 func (c *Client) wait(ctx context.Context, op incusclient.Operation, what string) error {
+	// Whatever the outcome, the cached instance list is no longer trustworthy.
+	defer c.list.invalidate()
+
 	if op == nil {
 		return nil
 	}

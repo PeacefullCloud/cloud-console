@@ -97,13 +97,13 @@ func (s *Service) SampleAll(ctx context.Context) error {
 		return err
 	}
 
+	batch := make([]models.Metric, 0, len(fulls))
 	for i := range fulls {
-		if err := s.sample(ctx, &fulls[i]); err != nil {
-			s.app.Log.Warn("could not sample instance", "instance", fulls[i].Name, "err", err)
+		if m := s.measure(&fulls[i]); m != nil {
+			batch = append(batch, *m)
 		}
 	}
-
-	return nil
+	return s.app.DB.InsertMetrics(batch)
 }
 
 // Sample records a sample for a single instance.
@@ -116,6 +116,16 @@ func (s *Service) Sample(ctx context.Context, name string) error {
 }
 
 func (s *Service) sample(_ context.Context, full *incusapi.InstanceFull) error {
+	m := s.measure(full)
+	if m == nil {
+		return nil
+	}
+	return s.app.DB.InsertMetric(m)
+}
+
+// measure turns an instance's live state into a sample, or nil when the
+// instance is not running. It keeps the CPU baseline between calls.
+func (s *Service) measure(full *incusapi.InstanceFull) *models.Metric {
 	state := full.State
 	if state == nil {
 		return nil
@@ -150,7 +160,7 @@ func (s *Service) sample(_ context.Context, full *incusapi.InstanceFull) error {
 
 	rx, tx := incus.StateNetworkTotals(state)
 
-	return s.app.DB.InsertMetric(&models.Metric{
+	return &models.Metric{
 		InstanceName: inst.Name,
 		TS:           now,
 		CPUPct:       math.Round(pct*100) / 100,
@@ -160,12 +170,65 @@ func (s *Service) sample(_ context.Context, full *incusapi.InstanceFull) error {
 		DiskTotal:    incus.InstanceDiskBytes(inst),
 		NetRxBytes:   rx,
 		NetTxBytes:   tx,
-	})
+	}
 }
 
-// History returns samples for an instance within a window.
+// maxChartPoints caps how many samples a chart receives. A month at one
+// sample a minute is 43,200 points, far more than a chart can show and more
+// than is worth rendering and sending.
+const maxChartPoints = 480
+
+// History returns samples for an instance within a window, thinned to at most
+// maxChartPoints.
 func (s *Service) History(instanceName string, window time.Duration) ([]models.Metric, error) {
-	return s.app.DB.ListMetrics(instanceName, time.Now().Add(-window))
+	samples, err := s.app.DB.ListMetrics(instanceName, time.Now().Add(-window))
+	if err != nil {
+		return nil, err
+	}
+	return Downsample(samples, maxChartPoints), nil
+}
+
+// Downsample reduces samples (oldest first) to at most max points by averaging
+// gauges over equal-sized groups. Network counters are cumulative, so the last
+// value of each group is kept.
+func Downsample(samples []models.Metric, max int) []models.Metric {
+	if max < 1 || len(samples) <= max {
+		return samples
+	}
+
+	size := (len(samples) + max - 1) / max
+	out := make([]models.Metric, 0, max)
+	for start := 0; start < len(samples); start += size {
+		end := start + size
+		if end > len(samples) {
+			end = len(samples)
+		}
+		group := samples[start:end]
+
+		var cpu float64
+		var mem, memTotal, disk, diskTotal int64
+		for _, m := range group {
+			cpu += m.CPUPct
+			mem += m.MemUsed
+			memTotal += m.MemTotal
+			disk += m.DiskUsed
+			diskTotal += m.DiskTotal
+		}
+		n := int64(len(group))
+		last := group[len(group)-1]
+		out = append(out, models.Metric{
+			InstanceName: last.InstanceName,
+			TS:           group[len(group)/2].TS,
+			CPUPct:       math.Round(cpu/float64(n)*100) / 100,
+			MemUsed:      mem / n,
+			MemTotal:     memTotal / n,
+			DiskUsed:     disk / n,
+			DiskTotal:    diskTotal / n,
+			NetRxBytes:   last.NetRxBytes,
+			NetTxBytes:   last.NetTxBytes,
+		})
+	}
+	return out
 }
 
 // prune deletes samples older than the retention window.

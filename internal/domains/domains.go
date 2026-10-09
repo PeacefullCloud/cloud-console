@@ -73,6 +73,9 @@ func (s *Service) Add(ctx context.Context, instanceName, domain string, port int
 	if !validDomain(domain) {
 		return fmt.Errorf("%w: %q is not a valid hostname", ErrInvalid, domain)
 	}
+	if host := s.app.Caddy.ConsoleHost(); host != "" && domain == host {
+		return fmt.Errorf("%w: %s is the console's own address", ErrInvalid, domain)
+	}
 	if port <= 0 || port > 65535 {
 		port = 80
 	}
@@ -143,16 +146,16 @@ func (s *Service) Routes(ctx context.Context) ([]caddy.Route, error) {
 		return nil, err
 	}
 
-	// Cache instance addresses so many domains on one instance cost one lookup.
-	addresses := map[string]string{}
+	// A failed listing must abort the sync. Treating it as "no instance has an
+	// address" would render an empty Caddyfile and take every site down.
+	addresses, err := s.addresses(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	routes := make([]caddy.Route, 0, len(rows))
 	for _, row := range rows {
-		ip, ok := addresses[row.InstanceName]
-		if !ok {
-			ip = s.instanceAddress(row.InstanceName)
-			addresses[row.InstanceName] = ip
-		}
+		ip := addresses[row.InstanceName]
 		if ip == "" {
 			// The instance is stopped; leave it out rather than proxying nowhere.
 			s.app.Log.Warn("domain has no upstream, skipping", "domain", row.Domain, "instance", row.InstanceName)
@@ -200,15 +203,14 @@ func (s *Service) PreviewCaddyfile(ctx context.Context) string {
 }
 
 func (s *Service) enrich(ctx context.Context, rows []models.Domain) []Record {
-	addresses := map[string]string{}
+	addresses, err := s.addresses(ctx)
+	if err != nil {
+		s.app.Log.Warn("could not resolve domain upstreams", "err", err)
+	}
 
 	out := make([]Record, 0, len(rows))
 	for _, row := range rows {
-		ip, ok := addresses[row.InstanceName]
-		if !ok {
-			ip = s.instanceAddress(row.InstanceName)
-			addresses[row.InstanceName] = ip
-		}
+		ip := addresses[row.InstanceName]
 
 		port := row.Port
 		if port == 0 {
@@ -231,13 +233,18 @@ func (s *Service) enrich(ctx context.Context, rows []models.Domain) []Record {
 	return out
 }
 
-// instanceAddress resolves an instance's private IPv4 address.
-func (s *Service) instanceAddress(name string) string {
-	full, err := s.app.Incus.InstanceFull(name)
+// addresses maps every instance to its private IPv4 address from a single
+// (shared, cached) listing, rather than one Incus query per domain.
+func (s *Service) addresses(ctx context.Context) (map[string]string, error) {
+	fulls, err := s.app.Incus.Instances(ctx)
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("list instances: %w", err)
 	}
-	return incus.InstanceIP(full)
+	out := make(map[string]string, len(fulls))
+	for i := range fulls {
+		out[fulls[i].Name] = incus.InstanceIP(&fulls[i])
+	}
+	return out, nil
 }
 
 func validDomain(domain string) bool {

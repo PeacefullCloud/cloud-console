@@ -17,6 +17,9 @@ type loginState struct {
 	next       string
 	nonce      string
 	verifier   string
+	// linkUserID is non-zero when a signed-in user started this flow to link
+	// the provider identity to their own account rather than to sign in.
+	linkUserID int64
 	expires    time.Time
 }
 
@@ -41,7 +44,7 @@ func newID() (string, error) {
 }
 
 // save records a pending login and returns its state token.
-func (s *stateStore) save(providerID int64, next, nonce, verifier string) (string, error) {
+func (s *stateStore) save(providerID int64, next, nonce, verifier string, linkUserID int64) (string, error) {
 	state, err := newID()
 	if err != nil {
 		return "", err
@@ -62,6 +65,7 @@ func (s *stateStore) save(providerID int64, next, nonce, verifier string) (strin
 		next:       next,
 		nonce:      nonce,
 		verifier:   verifier,
+		linkUserID: linkUserID,
 		expires:    now.Add(loginStateTTL),
 	}
 	return state, nil

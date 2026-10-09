@@ -477,7 +477,8 @@ func (s *Server) handleInstanceState(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r)
 	username := usernameOf(user)
 
-	ctx := r.Context()
+	ctx, cancel := operationContext(r)
+	defer cancel()
 	var err error
 
 	if werr := checkWriteAccess(r); werr != nil {
@@ -490,6 +491,8 @@ func (s *Server) handleInstanceState(w http.ResponseWriter, r *http.Request) {
 			err = s.Instances.Stop(ctx, name)
 		case "restart":
 			err = s.Instances.Restart(ctx, name)
+		case "force-stop":
+			err = s.Instances.ForceStop(ctx, name)
 		default:
 			err = errors.New("unknown action " + action)
 		}
@@ -594,7 +597,9 @@ func (s *Server) handleInstanceDelete(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Instances.Delete(r.Context(), name)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.Delete(ctx, name)
 	}
 	s.App.Activity.Record(username, "Delete instance", name, "", err)
 
@@ -632,7 +637,9 @@ func (s *Server) handleInstanceRename(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Instances.Rename(r.Context(), name, newName)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.Rename(ctx, name, newName)
 	}
 	s.App.Activity.Record(username, "Rename instance", name, "to "+newName, err)
 
@@ -670,16 +677,16 @@ func (s *Server) handleInstanceLimits(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	username := usernameOf(userFrom(r))
 
-	cpu := atoiDefault(r.FormValue("cpu"), 0)
-	memoryMB := atoiDefault(r.FormValue("memory_mb"), 0)
-	diskGB := atoiDefault(r.FormValue("disk_gb"), 0)
-
-	err := checkWriteAccess(r)
+	limits, detail, err := parseLimits(r)
 	if err == nil {
-		err = s.Instances.UpdateLimits(r.Context(), name, cpu, memoryMB, diskGB)
+		err = checkWriteAccess(r)
 	}
-	s.App.Activity.Record(username, "Update limits", name,
-		"cpu="+strconv.Itoa(cpu)+" mem="+strconv.Itoa(memoryMB)+"MB disk="+strconv.Itoa(diskGB)+"GB", err)
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.UpdateLimits(ctx, name, limits)
+	}
+	s.App.Activity.Record(username, "Update limits", name, detail, err)
 
 	s.finish(w, r, s.InstanceURL(name)+"?tab=settings", err, "Resource limits updated.")
 }
@@ -755,6 +762,8 @@ func titleAction(action string) string {
 		return "Stop instance"
 	case "restart":
 		return "Reboot instance"
+	case "force-stop":
+		return "Force stop instance"
 	default:
 		if action == "" {
 			return "Instance action"
@@ -768,4 +777,35 @@ func usernameOf(user *models.User) string {
 		return ""
 	}
 	return user.Username
+}
+
+// parseLimits reads the limits form. A blank field leaves that resource
+// alone; only an explicit 0 removes a CPU or memory limit. Treating blank as 0
+// would let an accidentally cleared field lift a customer's limits.
+func parseLimits(r *http.Request) (instances.Limits, string, error) {
+	var lim instances.Limits
+	var parts []string
+	for _, f := range []struct {
+		field, unit string
+		dst         **int
+	}{
+		{"cpu", "", &lim.CPU},
+		{"memory_mb", "MB", &lim.MemoryMB},
+		{"disk_gb", "GB", &lim.DiskGB},
+	} {
+		raw := strings.TrimSpace(r.FormValue(f.field))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return lim, "", errors.New(f.field + " must be a whole number")
+		}
+		*f.dst = &n
+		parts = append(parts, f.field+"="+raw+f.unit)
+	}
+	if len(parts) == 0 {
+		return lim, "", errors.New("enter at least one limit to change")
+	}
+	return lim, strings.Join(parts, " "), nil
 }

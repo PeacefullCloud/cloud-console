@@ -164,16 +164,17 @@ it also works as a systemd `EnvironmentFile=`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CONSOLE_ADDR` | `:8080` | HTTP listen address |
+| `CONSOLE_ADDR` | `127.0.0.1:8080` | HTTP listen address. Loopback by default; put Caddy in front |
 | `CONSOLE_BASE_URL` | `http://localhost:8080` | Public URL, used for the console's own Caddy block |
 | `CONSOLE_DATA_DIR` | `./data` | SQLite database and backup archives |
 | `CONSOLE_DB_PATH` | `<data>/console.db` | SQLite file path |
 | `CONSOLE_ENV_FILE` | `./.env` | Alternative env file to load |
-| `CONSOLE_SECURE_COOKIES` | `false` | Set `true` when serving over HTTPS |
+| `CONSOLE_SECURE_COOKIES` | `true` for an `https://` base URL, else `false` | Secure flag on cookies |
+| `CONSOLE_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Proxies whose `X-Forwarded-For` is trusted (IPs or CIDRs, or `none`). Add Caddy's network if it runs in a container |
 | `CONSOLE_SESSION_TTL_HOURS` | `168` | Session lifetime |
-| `CONSOLE_MAX_INSTANCES` | `100` | Informational limit for the UI |
+| `CONSOLE_MAX_INSTANCES` | `100` | Most instances the console will create (0 = no limit) |
 | `CONSOLE_ADMIN_USER` | `admin` | Bootstrap administrator username |
-| `CONSOLE_ADMIN_PASSWORD` | *(random)* | Bootstrap password; a random one is printed once when unset |
+| `CONSOLE_ADMIN_PASSWORD` | *(random)* | Bootstrap password. When unset, a random one is written to `<data>/initial-admin-password` (mode 0600), and shown on the terminal if there is one. It is never logged |
 | `CONSOLE_DEV` | `false` | Load templates/static from disk for live editing |
 
 ### Incus
@@ -211,7 +212,13 @@ still recorded but nothing is reloaded, and the console says so in the UI.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CONSOLE_METRICS_INTERVAL` | `60` | Seconds between samples (minimum 10) |
-| `CONSOLE_METRICS_RETENTION_HOURS` | `168` | How long samples are kept |
+| `CONSOLE_METRICS_RETENTION_HOURS` | `720` | How long samples are kept (720 = the 30-day chart) |
+| `CONSOLE_SNAPSHOT_INTERVAL_HOURS` | `0` (off) | Take an automatic snapshot of every instance this often |
+| `CONSOLE_SNAPSHOT_KEEP` | `7` | Automatic snapshots kept per instance; older `auto-*` ones are deleted. Manual snapshots are never pruned |
+| `CONSOLE_METRICS_TOKEN` | _(off)_ | Turns on `GET /metrics` (Prometheus) for a scraper sending `Authorization: Bearer <token>` |
+| `CONSOLE_ALERT_WEBHOOK_URL` | _(off)_ | Receives a JSON `POST` when a background job fails (works with Slack, Mattermost and Discord webhooks) |
+
+Admins can download the audit log as CSV from the Activity page.
 
 ---
 
@@ -237,18 +244,20 @@ CADDY_ADMIN_URL=http://localhost:2019 \
 ./cloud-console
 ```
 
-On first start the console creates the SQLite schema, then prints the bootstrap
-administrator password if you did not set one:
+On first start the console creates the SQLite schema. If you did not set
+`CONSOLE_ADMIN_PASSWORD`, it generates a bootstrap administrator password and
+writes it to `data/initial-admin-password`, readable only by its owner. On an
+interactive terminal it is also printed there. It is never written to the log.
 
 ```text
 level=INFO msg="applied migration" name=001_init.sql
 level=INFO msg="loaded environment file" path=.env
 level=INFO msg="connected to incus" server=incus-01 version=6.23 driver="lxc | qemu"
-level=WARN msg="created the initial administrator account" username=admin password=Kf7mQp2Xr9Lt
+level=WARN msg="created the initial administrator account" username=admin password_file=data/initial-admin-password
 ```
 
-Sign in, change that password in **Settings → Your password**, and create the
-users you need.
+Sign in, change that password in **Settings → Your password**, delete the file,
+and create the users you need.
 
 ### Health check
 
@@ -416,8 +425,18 @@ Browser ──HTTPS──► Caddy ──► Go Console ──Unix socket──�
   mutating request.
 - Session and flash cookies are `HttpOnly` and `SameSite=Lax`; set
   `CONSOLE_SECURE_COOKIES=true` behind HTTPS.
-- Roles: `admin` (everything), `operator` (manage instances), `viewer`
-  (read only).
+- Sign-in is rate limited per username, per address and per second-factor
+  user; each 2FA code works once; changing two-factor needs the password.
+- Turning on two-factor shows 8 one-time recovery codes (stored hashed, shown
+  once; regenerate them in Settings). Admins can reset another user's password,
+  and everyone can see and sign out their own devices under Settings.
+- Responses carry a strict Content-Security-Policy (same-origin scripts only),
+  `X-Frame-Options: DENY`, `nosniff`, and HSTS when cookies are secure.
+- Two-factor secrets are encrypted in the database with `CONSOLE_SECRET_KEY` (or a
+  generated `secret.key` in the data directory). Back the key up with the data.
+- `X-Forwarded-For` is trusted only from `CONSOLE_TRUSTED_PROXIES`.
+- Roles: `admin` (everything, plus the host, user, SSO, storage and routing
+  settings), `operator` (manage instances), `viewer` (read only).
 - Every mutating action is written to the audit log with the user and result.
 - Set `CONSOLE_SECURE_COOKIES=true` and put the console behind Caddy or another TLS
   terminator before exposing it.
@@ -461,8 +480,9 @@ Implemented:
 - Backups: create, list, restore, delete, export to S3-compatible storage
 - Monitoring: CPU, memory, disk and network history with charts
 - Access: console and diagnostic command snippets
-- Settings: host capacity, storage pools, console users, password change,
-  S3 status, generated Caddyfile preview
+- Settings: host capacity, storage pools, console users, S3 status and the
+  generated Caddyfile preview (admins only); your own password, two-factor and
+  linked sign-in (everyone)
 - Activity: audit log and background job history
 
 Deliberately not in V1 (add when actually needed):

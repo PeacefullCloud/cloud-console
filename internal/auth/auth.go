@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -39,11 +40,95 @@ type Service struct {
 	db  *database.DB
 	cfg *config.Config
 	log *slog.Logger
+
+	// Brute-force limits. Password guesses are counted per username and per
+	// client address; wrong 2FA codes per user across every challenge, so
+	// signing in again does not reset the budget.
+	userThrottle *Throttle
+	ipThrottle   *Throttle
+	totpThrottle *Throttle
+	// confirmThrottle limits password re-checks made from an open session
+	// (turning two-factor on or off), which a stolen cookie could otherwise
+	// use to guess the password without ever hitting the login throttle.
+	confirmThrottle *Throttle
+
+	// lastStep remembers the newest TOTP time step each user redeemed, so a
+	// code that was observed once cannot be replayed within its window.
+	stepMu   sync.Mutex
+	lastStep map[int64]int64
+
+	clock func() time.Time
 }
+
+// Failure budgets inside throttleWindow.
+const (
+	throttleWindow      = 15 * time.Minute
+	userLoginLimit      = 8
+	ipLoginLimit        = 40
+	totpFailureLimit    = 6
+	confirmFailureLimit = 5
+)
 
 // New creates the auth service.
 func New(db *database.DB, cfg *config.Config, log *slog.Logger) *Service {
-	return &Service{db: db, cfg: cfg, log: log}
+	return &Service{
+		db:              db,
+		cfg:             cfg,
+		log:             log,
+		userThrottle:    NewThrottle(userLoginLimit, throttleWindow),
+		ipThrottle:      NewThrottle(ipLoginLimit, throttleWindow),
+		totpThrottle:    NewThrottle(totpFailureLimit, throttleWindow),
+		confirmThrottle: NewThrottle(confirmFailureLimit, throttleWindow),
+		lastStep:        map[int64]int64{},
+		clock:           time.Now,
+	}
+}
+
+// CheckLoginAllowed refuses a password attempt before the password is even
+// looked at, so a locked account cannot be probed. The error is a
+// *LockoutError.
+func (s *Service) CheckLoginAllowed(username, ip string) error {
+	if blocked, wait := s.userThrottle.Blocked(username); blocked {
+		return &LockoutError{RetryAfter: wait}
+	}
+	if blocked, wait := s.ipThrottle.Blocked(ip); blocked {
+		return &LockoutError{RetryAfter: wait}
+	}
+	return nil
+}
+
+// RecordLoginFailure counts a rejected password against the username and the
+// address. Unknown usernames count too, so lockouts reveal nothing.
+func (s *Service) RecordLoginFailure(username, ip string) {
+	s.userThrottle.Fail(username)
+	s.ipThrottle.Fail(ip)
+}
+
+// RecordLoginSuccess clears the username's password failures. The address
+// keeps its history: one good account must not launder guesses at others.
+func (s *Service) RecordLoginSuccess(username string) {
+	s.userThrottle.Reset(username)
+}
+
+// ConfirmPassword re-checks the signed-in user's password before a sensitive
+// change. Wrong guesses are counted per user; the error is ErrInvalidCredentials
+// or a *LockoutError.
+func (s *Service) ConfirmPassword(userID int64, password string) error {
+	key := userKey(userID)
+	if blocked, wait := s.confirmThrottle.Blocked(key); blocked {
+		return &LockoutError{RetryAfter: wait}
+	}
+
+	user, err := s.db.GetUser(userID)
+	if err != nil {
+		return err
+	}
+	if !VerifyPassword(user.PasswordHash, password) {
+		s.confirmThrottle.Fail(key)
+		return ErrInvalidCredentials
+	}
+	s.confirmThrottle.Reset(key)
+	return nil
 }
 
 // HashPassword hashes a plaintext password with bcrypt.
@@ -100,40 +185,49 @@ func (s *Service) EnsureAdmin() (generatedPassword string, err error) {
 	return generatedPassword, nil
 }
 
-// Login validates credentials and opens a session.
-func (s *Service) Login(username, password, ip, userAgent string) (token string, user *models.User, err error) {
+// VerifyCredentials checks a username and password and returns the user. It
+// creates no session, so callers can apply further requirements (a second
+// factor, the account's allowed sign-in methods) before one exists. Attempts
+// are throttled; the error may be ErrInvalidCredentials or a *LockoutError.
+func (s *Service) VerifyCredentials(username, password, ip string) (*models.User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || password == "" {
-		return "", nil, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
+	}
+	if err := s.CheckLoginAllowed(username, ip); err != nil {
+		return nil, err
 	}
 
-	user, err = s.db.GetUserByUsername(username)
+	user, err := s.db.GetUserByUsername(username)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			// Spend the same time as a real check to avoid user enumeration.
 			_ = bcrypt.CompareHashAndPassword([]byte("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidin"), []byte(password))
-			return "", nil, ErrInvalidCredentials
+			s.RecordLoginFailure(username, ip)
+			return nil, ErrInvalidCredentials
 		}
-		return "", nil, err
+		return nil, err
 	}
 
 	if !VerifyPassword(user.PasswordHash, password) {
-		return "", nil, ErrInvalidCredentials
+		s.RecordLoginFailure(username, ip)
+		return nil, ErrInvalidCredentials
 	}
+	s.RecordLoginSuccess(username)
+	return user, nil
+}
 
-	token, tokenHash, err := NewToken()
+// Login validates credentials and opens a session.
+func (s *Service) Login(username, password, ip, userAgent string) (token string, user *models.User, err error) {
+	user, err = s.VerifyCredentials(username, password, ip)
 	if err != nil {
 		return "", nil, err
 	}
 
-	expires := time.Now().Add(time.Duration(s.cfg.SessionTTL) * time.Hour)
-	if err := s.db.CreateSession(tokenHash, user.ID, expires, ip, userAgent); err != nil {
+	token, err = s.OpenSession(user, ip, userAgent)
+	if err != nil {
 		return "", nil, err
 	}
-	if err := s.db.TouchLastLogin(user.ID); err != nil {
-		s.log.Warn("could not update last login", "err", err)
-	}
-
 	return token, user, nil
 }
 
@@ -174,6 +268,26 @@ func (s *Service) ChangePassword(userID int64, current, next string) error {
 		return fmt.Errorf("password must be at least 8 characters")
 	}
 
+	hash, err := HashPassword(next)
+	if err != nil {
+		return err
+	}
+	if err := s.db.UpdatePassword(userID, hash); err != nil {
+		return err
+	}
+	return s.db.DeleteUserSessions(userID)
+}
+
+// ResetPassword sets a new password for a user without knowing the old one.
+// It is for administrators helping a locked-out user, and signs every session
+// of that user out. Authorisation is the caller's job.
+func (s *Service) ResetPassword(userID int64, next string) error {
+	if len(next) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	if _, err := s.db.GetUser(userID); err != nil {
+		return err
+	}
 	hash, err := HashPassword(next)
 	if err != nil {
 		return err

@@ -45,6 +45,24 @@
             <option value="sso" {{if eq .AuthMethod "sso"}}selected{{end}}>SSO only</option>
           </select>
         </form>
+        {{if ne .ID $.User.ID}}
+        <details class="disclosure">
+          <summary>Reset password</summary>
+          <div class="disclosure-body">
+            <form method="post" action="/settings/users/{{.ID}}/password"
+                  hx-post="/settings/users/{{.ID}}/password" hx-target="#users-list" hx-swap="outerHTML"
+                  hx-disabled-elt="find button"
+                  hx-confirm="Set a new password for {{.Username}}? They will be signed out everywhere."
+                  data-confirm="Set a new password for {{.Username}}? They will be signed out everywhere.">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <div class="row-tight">
+                <input type="password" name="new_password" minlength="8" required autocomplete="new-password" placeholder="New password (8+ characters)" aria-label="New password for {{.Username}}">
+                <button class="btn btn-sm" type="submit">Reset</button>
+              </div>
+            </form>
+          </div>
+        </details>
+        {{end}}
         {{if and .TOTPEnabled (ne .ID $.User.ID)}}
         <form method="post" action="/settings/users/{{.ID}}/totp/clear"
               hx-post="/settings/users/{{.ID}}/totp/clear" hx-target="#users-list" hx-swap="outerHTML" hx-disabled-elt="find button"
@@ -79,6 +97,25 @@
   </div>
   {{if .TOTPEnabled}}
   <p class="muted small">Sign-in asks for a code from your authenticator app after the password.</p>
+  {{if .RecoveryCodes}}
+  <div class="flash flash-ok" style="display:block">
+    <strong>Save these recovery codes now.</strong> Each works once if you lose your authenticator app. They are not shown again.
+    <pre class="mono" style="margin:10px 0 0;user-select:all">{{range .RecoveryCodes}}{{.}}
+{{end}}</pre>
+  </div>
+  {{else}}
+  <p class="muted small">Recovery codes left: <strong>{{.RecoveryLeft}}</strong>{{if lt .RecoveryLeft 3}} — generate a new set soon.{{end}}</p>
+  {{end}}
+  <form method="post" action="/settings/totp/recovery"
+        hx-post="/settings/totp/recovery" hx-target="#totp-card" hx-swap="outerHTML" hx-disabled-elt="find button"
+        style="margin-bottom:14px">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="field">
+      <label for="totp_recovery_password">Password, to generate a new set (the old codes stop working)</label>
+      <input id="totp_recovery_password" name="current_password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn btn-block" type="submit">Generate new recovery codes</button>
+  </form>
   <form method="post" action="/settings/totp/disable"
         hx-post="/settings/totp/disable" hx-target="#totp-card" hx-swap="outerHTML" hx-disabled-elt="find button">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
@@ -98,14 +135,14 @@
   <div class="field">
     <label>Secret key (manual entry)</label>
     <div class="copy-field">
-      <input type="text" readonly value="{{.TOTPSetupSecret}}" onclick="this.select()">
+      <input type="text" readonly value="{{.TOTPSetupSecret}}" data-select-on-click>
       <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupSecret}}">Copy</button>
     </div>
   </div>
   <div class="field">
     <label>Setup address (manual entry)</label>
     <div class="copy-field">
-      <input type="text" readonly value="{{.TOTPSetupURL}}" onclick="this.select()">
+      <input type="text" readonly value="{{.TOTPSetupURL}}" data-select-on-click>
       <button class="btn btn-sm" type="button" data-copy="{{.TOTPSetupURL}}">Copy</button>
     </div>
   </div>
@@ -123,6 +160,10 @@
   <form method="post" action="/settings/totp/setup"
         hx-post="/settings/totp/setup" hx-target="#totp-card" hx-swap="outerHTML" hx-disabled-elt="find button">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="field">
+      <label for="totp_setup_password">Confirm with your password</label>
+      <input id="totp_setup_password" name="current_password" type="password" autocomplete="current-password">
+    </div>
     <button class="btn btn-block" type="submit">Set up two-factor</button>
   </form>
   {{end}}
@@ -133,5 +174,43 @@
        fresh TOTP card; the flash travels out-of-band. */ -}}
 {{define "totp_response"}}
 {{template "totp_card" .}}
+{{template "settings_flash_oob" .}}
+{{end}}
+
+{{define "sessions_card"}}
+<div class="card" id="sessions-card">
+  <div class="card-head">
+    <div class="grow"><div class="card-title">Signed-in devices</div></div>
+    <span class="muted small">{{len .Sessions}}</span>
+  </div>
+  <p class="muted small">Browsers currently signed in to your account. Sign out any you do not recognise.</p>
+  {{range .Sessions}}
+  <div class="snap-row" style="padding:9px 0">
+    {{if not .Current}}
+    <form method="post" action="/settings/sessions/{{.ID}}/revoke"
+          hx-post="/settings/sessions/{{.ID}}/revoke" hx-target="#sessions-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button class="btn btn-sm" type="submit">Sign out</button>
+    </form>
+    {{end}}
+    <div class="grow">
+      <div class="snap-name" style="font-size:13px">{{.Device}}{{if .Current}} <span class="pill pill-ok">this device</span>{{end}}</div>
+      <div class="snap-meta">{{if .IP}}{{.IP}} · {{end}}signed in {{ago .CreatedAt}}</div>
+    </div>
+  </div>
+  {{end}}
+  {{if gt (len .Sessions) 1}}
+  <form method="post" action="/settings/sessions/revoke-others"
+        hx-post="/settings/sessions/revoke-others" hx-target="#sessions-card" hx-swap="outerHTML" hx-disabled-elt="find button"
+        hx-confirm="Sign out every other device?" data-confirm="Sign out every other device?" style="margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+    <button class="btn btn-sm" type="submit">Sign out all other devices</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+
+{{define "sessions_response"}}
+{{template "sessions_card" .}}
 {{template "settings_flash_oob" .}}
 {{end}}

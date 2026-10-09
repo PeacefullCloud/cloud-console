@@ -29,6 +29,14 @@
   <input type="hidden" name="action" value="stop">
   <button class="btn btn-outline" type="submit">Stop</button>
 </form>
+<form method="post" action="/instances/{{$inst.Name}}/state"
+      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button"
+      hx-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data."
+      data-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data.">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="action" value="force-stop">
+  <button class="btn btn-outline btn-danger" type="submit" title="Power off immediately, without a clean shutdown">Force stop</button>
+</form>
 {{else}}
 <form method="post" action="/instances/{{$inst.Name}}/state"
       hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">

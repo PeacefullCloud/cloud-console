@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -16,6 +18,18 @@ type s3Target struct {
 	client *minio.Client
 	bucket string
 	prefix string
+
+	mu     sync.Mutex
+	exists map[string]existsEntry
+}
+
+// existsTTL keeps listing pages from asking the bucket about the same object
+// on every view.
+const existsTTL = 30 * time.Second
+
+type existsEntry struct {
+	found bool
+	at    time.Time
 }
 
 // newS3Target builds a client for any S3-compatible endpoint (AWS S3, MinIO,
@@ -58,6 +72,7 @@ func (t *s3Target) Key(instanceName, backupName string) string {
 
 // Upload sends a local archive to the bucket.
 func (t *s3Target) Upload(ctx context.Context, key, path string) (int64, error) {
+	defer t.forget(key)
 	info, err := t.client.FPutObject(ctx, t.bucket, key, path, minio.PutObjectOptions{
 		ContentType: "application/gzip",
 	})
@@ -77,6 +92,7 @@ func (t *s3Target) Download(ctx context.Context, key, path string) error {
 
 // Delete removes an archive from the bucket. A missing object is not an error.
 func (t *s3Target) Delete(ctx context.Context, key string) error {
+	defer t.forget(key)
 	if err := t.client.RemoveObject(ctx, t.bucket, key, minio.RemoveObjectOptions{}); err != nil {
 		return fmt.Errorf("delete %s: %w", key, err)
 	}
@@ -94,8 +110,30 @@ func (t *s3Target) Stat(ctx context.Context, key string) (int64, error) {
 
 // Exists reports whether an object is present.
 func (t *s3Target) Exists(ctx context.Context, key string) bool {
+	t.mu.Lock()
+	if e, ok := t.exists[key]; ok && time.Since(e.at) < existsTTL {
+		t.mu.Unlock()
+		return e.found
+	}
+	t.mu.Unlock()
+
 	_, err := t.client.StatObject(ctx, t.bucket, key, minio.StatObjectOptions{})
-	return err == nil
+	found := err == nil
+
+	t.mu.Lock()
+	if t.exists == nil {
+		t.exists = map[string]existsEntry{}
+	}
+	t.exists[key] = existsEntry{found: found, at: time.Now()}
+	t.mu.Unlock()
+	return found
+}
+
+// forget drops what is remembered about an object after it changed.
+func (t *s3Target) forget(key string) {
+	t.mu.Lock()
+	delete(t.exists, key)
+	t.mu.Unlock()
 }
 
 func regionOf(t *s3Target) string {

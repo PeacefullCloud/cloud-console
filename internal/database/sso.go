@@ -10,7 +10,7 @@ import (
 // ListProviders returns all SSO providers by name.
 func (d *DB) ListProviders() ([]models.SSOProvider, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, issuer, client_id, client_secret, button_label, default_role, require_mfa, enabled, created_at
+		`SELECT id, name, issuer, client_id, client_secret, button_label, default_role, require_mfa, enabled, provisioning, allowed_domains, created_at
 		 FROM sso_providers ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -23,7 +23,7 @@ func (d *DB) ListProviders() ([]models.SSOProvider, error) {
 		var enabled, requireMFA int64
 		var created any
 		if err := rows.Scan(&p.ID, &p.Name, &p.Issuer, &p.ClientID, &p.ClientSecret,
-			&p.ButtonLabel, &p.DefaultRole, &requireMFA, &enabled, &created); err != nil {
+			&p.ButtonLabel, &p.DefaultRole, &requireMFA, &enabled, &p.Provisioning, &p.AllowedDomains, &created); err != nil {
 			return nil, err
 		}
 		p.RequireMFA = requireMFA == 1
@@ -37,14 +37,14 @@ func (d *DB) ListProviders() ([]models.SSOProvider, error) {
 // GetProvider loads one SSO provider.
 func (d *DB) GetProvider(id int64) (*models.SSOProvider, error) {
 	row := d.sql.QueryRow(
-		`SELECT id, name, issuer, client_id, client_secret, button_label, default_role, require_mfa, enabled, created_at
+		`SELECT id, name, issuer, client_id, client_secret, button_label, default_role, require_mfa, enabled, provisioning, allowed_domains, created_at
 		 FROM sso_providers WHERE id = ?`, id)
 
 	var p models.SSOProvider
 	var enabled, requireMFA int64
 	var created any
 	if err := row.Scan(&p.ID, &p.Name, &p.Issuer, &p.ClientID, &p.ClientSecret,
-		&p.ButtonLabel, &p.DefaultRole, &requireMFA, &enabled, &created); err != nil {
+		&p.ButtonLabel, &p.DefaultRole, &requireMFA, &enabled, &p.Provisioning, &p.AllowedDomains, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -69,9 +69,9 @@ func (d *DB) SaveProvider(p *models.SSOProvider) error {
 
 	if p.ID == 0 {
 		res, err := d.sql.Exec(
-			`INSERT INTO sso_providers (name, issuer, client_id, client_secret, button_label, default_role, require_mfa, enabled)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.Name, p.Issuer, p.ClientID, p.ClientSecret, p.ButtonLabel, p.DefaultRole, requireMFA, enabled)
+			`INSERT INTO sso_providers (name, issuer, client_id, client_secret, button_label, default_role, require_mfa, enabled, provisioning, allowed_domains)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.Name, p.Issuer, p.ClientID, p.ClientSecret, p.ButtonLabel, p.DefaultRole, requireMFA, enabled, p.Provisioning, p.AllowedDomains)
 		if err != nil {
 			return err
 		}
@@ -85,8 +85,8 @@ func (d *DB) SaveProvider(p *models.SSOProvider) error {
 
 	_, err := d.sql.Exec(
 		`UPDATE sso_providers SET name = ?, issuer = ?, client_id = ?, client_secret = ?,
-		 button_label = ?, default_role = ?, require_mfa = ?, enabled = ? WHERE id = ?`,
-		p.Name, p.Issuer, p.ClientID, p.ClientSecret, p.ButtonLabel, p.DefaultRole, requireMFA, enabled, p.ID)
+		 button_label = ?, default_role = ?, require_mfa = ?, enabled = ?, provisioning = ?, allowed_domains = ? WHERE id = ?`,
+		p.Name, p.Issuer, p.ClientID, p.ClientSecret, p.ButtonLabel, p.DefaultRole, requireMFA, enabled, p.Provisioning, p.AllowedDomains, p.ID)
 	return err
 }
 

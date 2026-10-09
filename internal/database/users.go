@@ -67,7 +67,9 @@ func (d *DB) ListUsers() ([]models.User, error) {
 		}
 		u.CreatedAt = parseTime(created)
 		u.LastLoginAt = nullableTime(last)
-		u.TOTPSecret = secret.String
+		if u.TOTPSecret, err = d.openSecret(secret.String); err != nil {
+			return nil, fmt.Errorf("user %q: %w", u.Username, err)
+		}
 		u.TOTPEnabled = enabled.Int64 == 1
 		out = append(out, u)
 	}
@@ -89,7 +91,9 @@ func (d *DB) scanUser(row *sql.Row) (*models.User, error) {
 	}
 	u.CreatedAt = parseTime(created)
 	u.LastLoginAt = nullableTime(last)
-	u.TOTPSecret = secret.String
+	if u.TOTPSecret, err = d.openSecret(secret.String); err != nil {
+		return nil, fmt.Errorf("user %q: %w", u.Username, err)
+	}
 	u.TOTPEnabled = enabled.Int64 == 1
 	return &u, nil
 }
@@ -109,7 +113,11 @@ func (d *DB) UpdatePassword(id int64, hash string) error {
 // SetTOTPSecret stores a fresh TOTP secret. The secret alone does not enable
 // two-factor; the user must confirm a code first.
 func (d *DB) SetTOTPSecret(id int64, secret string) error {
-	_, err := d.sql.Exec(`UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE id = ?`, secret, id)
+	stored, err := d.sealSecret(secret)
+	if err != nil {
+		return err
+	}
+	_, err = d.sql.Exec(`UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE id = ?`, stored, id)
 	return err
 }
 
@@ -126,8 +134,11 @@ func (d *DB) SetTOTPEnabled(id int64, enabled bool) error {
 
 // ClearTOTP removes the secret and disables two-factor entirely.
 func (d *DB) ClearTOTP(id int64) error {
-	_, err := d.sql.Exec(`UPDATE users SET totp_secret = '', totp_enabled = 0 WHERE id = ?`, id)
-	return err
+	if _, err := d.sql.Exec(`UPDATE users SET totp_secret = '', totp_enabled = 0 WHERE id = ?`, id); err != nil {
+		return err
+	}
+	// Recovery codes only make sense next to a second factor.
+	return d.DeleteRecoveryCodes(id)
 }
 
 // DeleteUser removes a user and their sessions.

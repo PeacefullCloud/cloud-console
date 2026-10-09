@@ -41,7 +41,9 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 		err = errors.New("backup " + backup + " is still in progress — wait for it to finish")
 	}
 	if err == nil {
-		err = s.Backups.Delete(r.Context(), name, backup)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Backups.Delete(ctx, name, backup)
 	}
 	s.App.Activity.Record(username, "Delete backup", name, backup, err)
 

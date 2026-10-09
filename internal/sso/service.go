@@ -53,6 +53,9 @@ type ProviderView struct {
 	DefaultRole string
 	RequireMFA  bool
 	Enabled     bool
+	// Provisioning is open | domains | link_only.
+	Provisioning   string
+	AllowedDomains string
 	// CallbackURL is the exact redirect URI to register at the IdP.
 	CallbackURL string
 }
@@ -60,15 +63,17 @@ type ProviderView struct {
 // ProviderInput is the validated shape of the Settings provider form. An
 // empty ClientSecret on an existing provider keeps the stored secret.
 type ProviderInput struct {
-	ID           int64
-	Name         string
-	Issuer       string
-	ClientID     string
-	ClientSecret string
-	ButtonLabel  string
-	DefaultRole  string
-	RequireMFA   bool
-	Enabled      bool
+	ID             int64
+	Name           string
+	Issuer         string
+	ClientID       string
+	ClientSecret   string
+	ButtonLabel    string
+	DefaultRole    string
+	Provisioning   string
+	AllowedDomains string
+	RequireMFA     bool
+	Enabled        bool
 }
 
 // Login is a verified SSO login, ready to be matched to a console user.
@@ -81,6 +86,16 @@ type Login struct {
 	EmailVerified bool
 	MFA           bool
 	Next          string // post-login target stashed at start, same-site only
+
+	// DefaultRole is the provider's role for accounts it provisions.
+	DefaultRole string
+	// Provisioning and AllowedDomains say whether an unknown identity may
+	// get an account (see MayProvision).
+	Provisioning   string
+	AllowedDomains string
+	// LinkUserID is set when a signed-in user started the flow to link this
+	// identity to their own account. Zero means a normal sign-in.
+	LinkUserID int64
 }
 
 // idClaims is the subset of ID-token claims the console reads.
@@ -170,16 +185,18 @@ func (s *Service) viewOf(p models.SSOProvider) ProviderView {
 	}
 	base := strings.TrimSuffix(strings.TrimSpace(s.cfg.BaseURL), "/")
 	return ProviderView{
-		ID:          p.ID,
-		Name:        p.Name,
-		Issuer:      p.Issuer,
-		ClientID:    p.ClientID,
-		HasSecret:   p.ClientSecret != "",
-		ButtonLabel: label,
-		DefaultRole: p.DefaultRole,
-		RequireMFA:  p.RequireMFA,
-		Enabled:     p.Enabled,
-		CallbackURL: fmt.Sprintf("%s/auth/sso/callback/%d", base, p.ID),
+		ID:             p.ID,
+		Name:           p.Name,
+		Issuer:         p.Issuer,
+		ClientID:       p.ClientID,
+		HasSecret:      p.ClientSecret != "",
+		ButtonLabel:    label,
+		DefaultRole:    p.DefaultRole,
+		RequireMFA:     p.RequireMFA,
+		Enabled:        p.Enabled,
+		Provisioning:   p.Provisioning,
+		AllowedDomains: p.AllowedDomains,
+		CallbackURL:    fmt.Sprintf("%s/auth/sso/callback/%d", base, p.ID),
 	}
 }
 
@@ -209,6 +226,24 @@ func (s *Service) SaveProvider(in ProviderInput) (*models.SSOProvider, error) {
 	case auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer:
 	default:
 		return nil, errors.New("unknown default role")
+	}
+
+	provisioning := in.Provisioning
+	if provisioning == "" {
+		provisioning = ProvisionLinkOnly
+	}
+	domains, err := NormalizeDomains(in.AllowedDomains)
+	if err != nil {
+		return nil, err
+	}
+	switch provisioning {
+	case ProvisionOpen, ProvisionLinkOnly:
+	case ProvisionDomains:
+		if domains == "" {
+			return nil, errors.New("list at least one allowed email domain, or choose another account policy")
+		}
+	default:
+		return nil, errors.New("unknown account policy")
 	}
 
 	var existing *models.SSOProvider
@@ -252,14 +287,16 @@ func (s *Service) SaveProvider(in ProviderInput) (*models.SSOProvider, error) {
 	}
 
 	row := &models.SSOProvider{
-		Name:         name,
-		Issuer:       issuer,
-		ClientID:     clientID,
-		ClientSecret: encrypted,
-		ButtonLabel:  label,
-		DefaultRole:  in.DefaultRole,
-		RequireMFA:   in.RequireMFA,
-		Enabled:      in.Enabled,
+		Name:           name,
+		Issuer:         issuer,
+		ClientID:       clientID,
+		ClientSecret:   encrypted,
+		ButtonLabel:    label,
+		DefaultRole:    in.DefaultRole,
+		RequireMFA:     in.RequireMFA,
+		Enabled:        in.Enabled,
+		Provisioning:   provisioning,
+		AllowedDomains: domains,
 	}
 	if existing != nil {
 		row.ID = existing.ID
@@ -339,34 +376,39 @@ func (s *Service) IdentityLabels() map[int64][]string {
 }
 
 // AuthURL starts a login: it stores state, nonce and PKCE verifier and
-// returns the IdP URL to redirect to.
-func (s *Service) AuthURL(providerID int64, next string) (string, error) {
+// returns the IdP URL to redirect to, plus the state token. The caller must
+// also hand the state to the browser in a cookie and check it on the callback,
+// so a callback URL cannot be replayed into a different browser.
+//
+// A non-zero linkUserID turns the flow into "link this identity to that
+// account" instead of a sign-in.
+func (s *Service) AuthURL(providerID int64, next string, linkUserID int64) (authURL, state string, err error) {
 	p, err := s.db.GetProvider(providerID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !p.Enabled {
-		return "", errors.New("this sign-in method is disabled")
+		return "", "", errors.New("this sign-in method is disabled")
 	}
 
 	verifier := oauth2.GenerateVerifier()
 	nonce, err := newID()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	state, err := s.states.save(providerID, next, nonce, verifier)
+	state, err = s.states.save(providerID, next, nonce, verifier, linkUserID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	cfg, _, err := s.oauthConfig(p)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	return cfg.AuthCodeURL(state,
 		oidc.Nonce(nonce),
 		oauth2.S256ChallengeOption(verifier),
-	), nil
+	), state, nil
 }
 
 // Callback completes a login: state check, code exchange, token verification
@@ -423,14 +465,18 @@ func (s *Service) Callback(ctx context.Context, providerID int64, code, state st
 	}
 
 	login := &Login{
-		ProviderName:  p.Name,
-		ProviderID:    p.ID,
-		Subject:       claims.Subject,
-		Username:      loginName(claims),
-		Email:         strings.TrimSpace(claims.Email),
-		EmailVerified: claims.EmailVerified != nil && *claims.EmailVerified,
-		MFA:           mfaClaimed(claims.AMR),
-		Next:          st.next,
+		ProviderName:   p.Name,
+		ProviderID:     p.ID,
+		Subject:        claims.Subject,
+		Username:       loginName(claims),
+		Email:          strings.TrimSpace(claims.Email),
+		EmailVerified:  claims.EmailVerified != nil && *claims.EmailVerified,
+		MFA:            mfaClaimed(claims.AMR),
+		Next:           st.next,
+		DefaultRole:    p.DefaultRole,
+		Provisioning:   p.Provisioning,
+		AllowedDomains: p.AllowedDomains,
+		LinkUserID:     st.linkUserID,
 	}
 
 	if p.RequireMFA && !login.MFA {

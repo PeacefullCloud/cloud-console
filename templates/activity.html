@@ -47,6 +47,7 @@
     <div class="card-head">
       <div class="grow"><div class="card-title">Audit log</div></div>
       <span class="muted small">{{.Total}} entr{{if eq .Total 1}}y{{else}}ies{{end}}</span>
+      {{if canAdmin .User}}<a class="btn btn-sm" href="/activity/export.csv" style="margin-left:10px">Export CSV</a>{{end}}
     </div>
 
     {{if .Activity}}

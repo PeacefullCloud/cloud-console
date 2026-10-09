@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strconv"
@@ -24,7 +25,7 @@ func (s *Server) handleSSOStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := s.SSO.AuthURL(providerID, safeNext(r.URL.Query().Get("next")))
+	target, state, err := s.SSO.AuthURL(providerID, safeNext(r.URL.Query().Get("next")), 0)
 	if err != nil {
 		s.log.Warn("sso start failed", "provider", providerID, "err", err)
 		s.setFlash(w, "err", "Sign-in is unavailable: "+err.Error())
@@ -32,10 +33,84 @@ func (s *Server) handleSSOStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setSSOStateCookie(w, state)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
-// handleSSOCallback completes a sign-in returning from a provider.
+// handleSSOLink starts the flow that attaches a provider identity to the
+// signed-in user's own account. It is the only way an identity gets linked to
+// an existing account: matching on a username claim would let anyone who can
+// pick their display name at the provider take over that account.
+func (s *Server) handleSSOLink(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r)
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	providerID, err := strconv.ParseInt(r.PathValue("provider"), 10, 64)
+	if err != nil || providerID <= 0 {
+		s.fail(w, r, "/settings", errors.New("unknown sign-in method"))
+		return
+	}
+
+	// A hijacked session could otherwise plant a permanent back door by
+	// linking the attacker's identity, so ask for the password. Accounts that
+	// are SSO-only have no password they know.
+	if sso.PasswordAllowed(user.AuthMethod) {
+		fresh, gerr := s.App.DB.GetUser(user.ID)
+		if gerr != nil || !auth.VerifyPassword(fresh.PasswordHash, r.FormValue("current_password")) {
+			s.App.Activity.Record(user.Username, "Link SSO identity", "", "", auth.ErrInvalidCredentials)
+			s.fail(w, r, "/settings", errors.New("incorrect password"))
+			return
+		}
+	}
+
+	if s.userLinkedToProvider(user.ID, providerID) {
+		s.fail(w, r, "/settings", errors.New("your account is already linked to that provider"))
+		return
+	}
+
+	target, state, err := s.SSO.AuthURL(providerID, "", user.ID)
+	if err != nil {
+		s.fail(w, r, "/settings", err)
+		return
+	}
+
+	s.setSSOStateCookie(w, state)
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// ssoStateCookie ties an SSO round trip to the browser that started it.
+const ssoStateCookie = "console_sso_state"
+
+func (s *Server) setSSOStateCookie(w http.ResponseWriter, state string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     ssoStateCookie,
+		Value:    state,
+		Path:     "/auth/sso/",
+		HttpOnly: true,
+		// Lax still accompanies the top-level redirect back from the provider.
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.App.Cfg.SecureCookies,
+		MaxAge:   600,
+	})
+}
+
+func (s *Server) clearSSOStateCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     ssoStateCookie,
+		Value:    "",
+		Path:     "/auth/sso/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.App.Cfg.SecureCookies,
+		MaxAge:   -1,
+	})
+}
+
+// handleSSOCallback completes a sign-in (or an identity link) returning from
+// a provider.
 func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	providerID, err := strconv.ParseInt(r.PathValue("provider"), 10, 64)
 	if err != nil || providerID <= 0 {
@@ -44,11 +119,29 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	login, err := s.SSO.Callback(r.Context(), providerID, r.URL.Query().Get("code"), r.URL.Query().Get("state"))
+	// The callback must arrive in the browser that started the flow;
+	// otherwise a callback URL obtained by an attacker could be fed to a
+	// victim to sign them in as the attacker.
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	cookie, cerr := r.Cookie(ssoStateCookie)
+	s.clearSSOStateCookie(w)
+	if cerr != nil || state == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+		s.log.Warn("sso callback rejected: state is not bound to this browser", "provider", providerID)
+		s.setFlash(w, "err", "Sign-in failed: this sign-in was not started in this browser — please try again.")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	login, err := s.SSO.Callback(r.Context(), providerID, r.URL.Query().Get("code"), state)
 	if err != nil {
 		s.log.Warn("sso callback failed", "provider", providerID, "err", err)
 		s.setFlash(w, "err", "Sign-in failed: "+err.Error())
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if login.LinkUserID != 0 {
+		s.completeSSOLink(w, r, login)
 		return
 	}
 
@@ -67,7 +160,7 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.App.Auth.OpenSession(user, clientIP(r), r.UserAgent())
+	token, err := s.App.Auth.OpenSession(user, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		s.setFlash(w, "err", "Sign-in failed: "+err.Error())
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -78,9 +171,66 @@ func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
 	s.finishPasswordLogin(w, r, token, user.Username, safeNext(login.Next))
 }
 
+// completeSSOLink finishes an identity link started from Settings. The link
+// only counts when the browser still holds the session of the user who
+// started it.
+func (s *Server) completeSSOLink(w http.ResponseWriter, r *http.Request, login *sso.Login) {
+	user := userFrom(r)
+	if user == nil || user.ID != login.LinkUserID {
+		s.setFlash(w, "err", "Linking failed: sign in again and retry from Settings.")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	var err error
+	switch owner, ferr := s.App.DB.FindIdentityUser(login.ProviderID, login.Subject); {
+	case ferr == nil && owner != user.ID:
+		// LinkIdentity would silently reassign the identity.
+		err = errors.New("that provider account is already linked to another user")
+	case ferr == nil:
+		err = errors.New("that provider account is already linked to you")
+	case !errors.Is(ferr, database.ErrNotFound):
+		err = ferr
+	case s.userLinkedToProvider(user.ID, login.ProviderID):
+		err = errors.New("your account is already linked to that provider")
+	default:
+		err = s.App.DB.LinkIdentity(user.ID, login.ProviderID, login.Subject)
+	}
+
+	s.App.Activity.Record(user.Username, "Link SSO identity", login.ProviderName, "", err)
+	s.finish(w, r, "/settings", err, "Linked "+login.ProviderName+" to your account.")
+}
+
+// userLinkedToProvider reports whether a user already has an identity at the
+// provider. (One identity per user per provider is a database constraint.)
+func (s *Server) userLinkedToProvider(userID, providerID int64) bool {
+	return s.linkedProviders(userID)[providerID]
+}
+
+// linkedProviders maps provider ids to true for every identity the user has.
+func (s *Server) linkedProviders(userID int64) map[int64]bool {
+	out := map[int64]bool{}
+	idents, err := s.App.DB.ListIdentities()
+	if err != nil {
+		return out
+	}
+	for _, ident := range idents {
+		if ident.UserID == userID {
+			out[ident.ProviderID] = true
+		}
+	}
+	return out
+}
+
 // resolveSSOUser maps a verified SSO login to a console user: a linked
-// identity wins, then a username match (linked on the spot), otherwise a new
-// account is provisioned with the provider's default role.
+// identity wins, otherwise a new account is provisioned with the provider's
+// default role, if the provider's account policy allows it.
+//
+// An unlinked identity is never matched to an existing account by username,
+// display name or email. Those claims are chosen by whoever controls the
+// identity at the provider, so matching them would hand over the account.
+// A colliding name simply gets a numbered variant. Existing users link a
+// provider explicitly from Settings (see handleSSOLink).
 func (s *Server) resolveSSOUser(login *sso.Login) (*models.User, error) {
 	if userID, err := s.App.DB.FindIdentityUser(login.ProviderID, login.Subject); err == nil {
 		return s.App.DB.GetUser(userID)
@@ -88,15 +238,15 @@ func (s *Server) resolveSSOUser(login *sso.Login) (*models.User, error) {
 		return nil, err
 	}
 
-	if login.Username != "" {
-		if existing, err := s.App.DB.GetUserByUsername(login.Username); err == nil {
-			if err := s.App.DB.LinkIdentity(existing.ID, login.ProviderID, login.Subject); err != nil {
-				return nil, err
-			}
-			return existing, nil
-		} else if !errors.Is(err, database.ErrNotFound) {
-			return nil, err
-		}
+	if err := login.MayProvision(); err != nil {
+		return nil, err
+	}
+
+	role := login.DefaultRole
+	switch role {
+	case auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer:
+	default:
+		role = auth.RoleViewer
 	}
 
 	username := sso.SuggestUsername(func(name string) bool {
@@ -113,7 +263,7 @@ func (s *Server) resolveSSOUser(login *sso.Login) (*models.User, error) {
 		return nil, err
 	}
 
-	created, err := s.App.DB.CreateUser(username, hash, auth.RoleViewer)
+	created, err := s.App.DB.CreateUser(username, hash, role)
 	if err != nil {
 		return nil, err
 	}
@@ -138,15 +288,17 @@ func (s *Server) handleProviderSave(w http.ResponseWriter, r *http.Request) {
 
 	id := int64(atoiDefault(r.FormValue("id"), 0))
 	input := sso.ProviderInput{
-		ID:           id,
-		Name:         r.FormValue("name"),
-		Issuer:       r.FormValue("issuer"),
-		ClientID:     r.FormValue("client_id"),
-		ClientSecret: r.FormValue("client_secret"),
-		ButtonLabel:  r.FormValue("button_label"),
-		DefaultRole:  r.FormValue("default_role"),
-		RequireMFA:   r.FormValue("require_mfa") != "",
-		Enabled:      r.FormValue("enabled") != "",
+		ID:             id,
+		Name:           r.FormValue("name"),
+		Issuer:         r.FormValue("issuer"),
+		ClientID:       r.FormValue("client_id"),
+		ClientSecret:   r.FormValue("client_secret"),
+		ButtonLabel:    r.FormValue("button_label"),
+		DefaultRole:    r.FormValue("default_role"),
+		Provisioning:   r.FormValue("provisioning"),
+		AllowedDomains: r.FormValue("allowed_domains"),
+		RequireMFA:     r.FormValue("require_mfa") != "",
+		Enabled:        r.FormValue("enabled") != "",
 	}
 	// A new provider starts enabled; the checkbox is only present on edit.
 	if id == 0 && r.FormValue("enabled") == "" {
@@ -253,16 +405,18 @@ func (s *Server) handleProviderToggle(w http.ResponseWriter, r *http.Request) {
 // serveSSOFragments renders the HTMX response for provider operations: the
 // fresh provider list plus an out-of-band flash.
 func (s *Server) serveSSOFragments(w http.ResponseWriter, r *http.Request, actionErr error, notice string) {
-	views, err := s.SSO.ProviderViews()
-	if err != nil {
-		actionErr = err
-	}
-
 	data := ssoFragmentData{
 		CSRF:      csrfFrom(r),
 		User:      userFrom(r),
-		Providers: views,
 		SSOKeySet: s.App.Cfg.SSOKeySet(),
+	}
+	// Providers expose issuer and client details, for admins only.
+	if checkAdminAccess(r) == nil {
+		views, err := s.SSO.ProviderViews()
+		if err != nil {
+			actionErr = err
+		}
+		data.Providers = views
 	}
 	if actionErr != nil {
 		data.Error = friendlyError(actionErr)

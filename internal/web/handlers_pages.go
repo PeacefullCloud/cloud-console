@@ -13,6 +13,8 @@ import (
 	"github.com/peaceful/cloud-console/internal/auth"
 	"github.com/peaceful/cloud-console/internal/database"
 	"github.com/peaceful/cloud-console/internal/instances"
+	"github.com/peaceful/cloud-console/internal/models"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 // jobWorkerCount is set by main so the settings page can display it.
@@ -34,7 +36,9 @@ func (s *Server) handleDomainCreate(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Domains.Add(r.Context(), name, domain, port)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Domains.Add(ctx, name, domain, port)
 	}
 	s.App.Activity.Record(username, "Add domain", name, domain, err)
 
@@ -48,7 +52,9 @@ func (s *Server) handleInstanceDomainDelete(w http.ResponseWriter, r *http.Reque
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Domains.Delete(r.Context(), id)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Domains.Delete(ctx, id)
 	}
 	s.App.Activity.Record(username, "Remove domain", name, "", err)
 
@@ -67,7 +73,9 @@ func (s *Server) handleDomainDelete(w http.ResponseWriter, r *http.Request) {
 
 	err := checkWriteAccess(r)
 	if err == nil {
-		err = s.Domains.Delete(r.Context(), id)
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Domains.Delete(ctx, id)
 	}
 	s.App.Activity.Record(username, "Remove domain", label, "", err)
 
@@ -84,9 +92,12 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	data := domainsData{
 		baseData:     s.newBase(w, r, "domains", "Domains & DNS"),
 		Domains:      list,
-		CaddyPreview: s.Domains.PreviewCaddyfile(r.Context()),
 		CaddyEnabled: s.Domains.CaddyEnabled(),
 		PublicIP:     strings.TrimSpace(s.App.DB.GetSetting("network.public_ip", "")),
+	}
+	// The generated Caddyfile covers every route on the host.
+	if checkAdminAccess(r) == nil {
+		data.CaddyPreview = s.Domains.PreviewCaddyfile(r.Context())
 	}
 	s.render(w, r, "domains", http.StatusOK, data)
 }
@@ -168,6 +179,12 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// http.Server.WriteTimeout would otherwise cut the stream a couple of
+	// minutes in, and every browser tab would reconnect forever.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		s.log.Warn("could not lift the write deadline for the job stream", "err", err)
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -178,19 +195,11 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "retry: 3000\n\n")
 	flusher.Flush()
 
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	frames, unsubscribe := s.jobFeed().subscribe(s.streamCtx)
+	defer unsubscribe()
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
-
-	last := ""
-	// Send the current state immediately so a fresh page does not wait.
-	if html, fingerprint, err := s.renderJobTracker(); err == nil {
-		last = fingerprint
-		writeSSE(w, "jobs", html)
-		flusher.Flush()
-	}
 
 	for {
 		select {
@@ -205,19 +214,19 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 			// idle stream when no jobs are running.
 			fmt.Fprintf(w, ": ping\n\n")
 			flusher.Flush()
-		case <-ticker.C:
-			html, fingerprint, err := s.renderJobTracker()
-			if err != nil {
-				continue
-			}
-			if fingerprint == last {
-				continue
-			}
-			last = fingerprint
-			writeSSE(w, "jobs", html)
+		case f := <-frames:
+			writeSSE(w, "jobs", f.HTML)
 			flusher.Flush()
 		}
 	}
+}
+
+// jobFeed is the one renderer behind every open job stream.
+func (s *Server) jobFeed() *feed {
+	s.feedOnce.Do(func() {
+		s.jobs = newFeed(2*time.Second, s.renderJobTracker)
+	})
+	return s.jobs
 }
 
 // renderJobTracker renders the job_list partial and returns its HTML plus a
@@ -334,13 +343,65 @@ func (s *Server) handleNetworking(w http.ResponseWriter, r *http.Request) {
 		Networks:     networks,
 		Instances:    list,
 		CaddyEnabled: s.Domains.CaddyEnabled(),
-		CaddyPath:    s.App.Cfg.CaddyConfigPath,
-		CaddyAdmin:   s.App.Cfg.CaddyAdminURL,
+	}
+	if checkAdminAccess(r) == nil {
+		data.CaddyPath = s.App.Cfg.CaddyConfigPath
+		data.CaddyAdmin = s.App.Cfg.CaddyAdminURL
 	}
 	s.render(w, r, "networking", http.StatusOK, data)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	s.renderSettings(w, r, nil)
+}
+
+// renderSettings draws the Settings page. recoveryCodes is non-nil only in the
+// response to generating them, the one time they can be read.
+func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, recoveryCodes []string) {
+	data := settingsData{
+		baseData: s.newBase(w, r, "settings", "Settings"),
+	}
+
+	// Everyone gets their own security settings. Host, user, provider, storage
+	// and routing details are for admins only, so they are never even loaded
+	// for anyone else.
+	if checkAdminAccess(r) == nil {
+		if err := s.fillAdminSettings(r, &data); err != nil {
+			s.renderError(w, r, "Settings", "settings", err)
+			return
+		}
+	}
+
+	if me := userFrom(r); me != nil {
+		data.Sessions = s.sessionViews(r, me.ID)
+		if enabled, err := s.SSO.PublicProviders(); err == nil {
+			data.LinkProviders = enabled
+			data.MyLinks = s.linkedProviders(me.ID)
+		}
+	}
+
+	// Two-factor state for the signed-in user. A pending setup secret is
+	// shown once, right after generation.
+	if me := userFrom(r); me != nil {
+		if fresh, err := s.App.DB.GetUser(me.ID); err == nil {
+			data.TOTPEnabled = fresh.TOTPEnabled
+			data.RecoveryCodes = recoveryCodes
+			if fresh.TOTPEnabled {
+				data.RecoveryLeft = s.App.Auth.RecoveryCodesLeft(fresh.ID)
+			}
+			if r.URL.Query().Get("totp") == "setup" && !fresh.TOTPEnabled && fresh.TOTPSecret != "" {
+				data.TOTPSetupSecret = fresh.TOTPSecret
+				data.TOTPSetupURL = auth.ProvisioningURL(fresh.Username, fresh.TOTPSecret)
+				data.TOTPSetupQR = totpQRCode(data.TOTPSetupURL)
+			}
+		}
+	}
+
+	s.render(w, r, "settings", http.StatusOK, data)
+}
+
+// fillAdminSettings loads the settings that only administrators may see.
+func (s *Server) fillAdminSettings(r *http.Request, data *settingsData) error {
 	host, err := s.Monitoring.HostStats()
 	if err != nil {
 		s.log.Warn("could not read host stats", "err", err)
@@ -349,8 +410,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	users, err := s.App.DB.ListUsers()
 	if err != nil {
-		s.renderError(w, r, "Settings", "settings", err)
-		return
+		return err
 	}
 
 	sessions, err := s.App.DB.CountSessions()
@@ -358,34 +418,28 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("could not count sessions", "err", err)
 	}
 
-	data := settingsData{
-		baseData: s.newBase(w, r, "settings", "Settings"),
-		Host:     host,
-		Users:    users,
-		Links:    s.SSO.IdentityLabels(),
+	data.Host = host
+	data.Users = users
+	data.Links = s.SSO.IdentityLabels()
 
-		S3Configured:      s.App.Cfg.S3Configured(),
-		S3Bucket:          s.App.Cfg.S3Bucket,
-		S3Endpoint:        s.App.Cfg.S3Endpoint,
-		S3Region:          s.App.Cfg.S3Region,
-		S3Prefix:          s.App.Cfg.S3Prefix,
-		S3AccessKeyMasked: maskSecret(s.App.Cfg.S3AccessKey),
+	data.S3Configured = s.App.Cfg.S3Configured()
+	data.S3Bucket = s.App.Cfg.S3Bucket
+	data.S3Endpoint = s.App.Cfg.S3Endpoint
+	data.S3Region = s.App.Cfg.S3Region
+	data.S3Prefix = s.App.Cfg.S3Prefix
+	data.S3AccessKeyMasked = maskSecret(s.App.Cfg.S3AccessKey)
 
-		CaddyEnabled:   s.Domains.CaddyEnabled(),
-		CaddyPath:      s.App.Cfg.CaddyConfigPath,
-		CaddyAdmin:     s.App.Cfg.CaddyAdminURL,
-		CaddyReloadCmd: s.App.Cfg.CaddyReloadCmd,
-		CaddyPreview:   s.Domains.PreviewCaddyfile(r.Context()),
+	data.CaddyEnabled = s.Domains.CaddyEnabled()
+	data.CaddyPath = s.App.Cfg.CaddyConfigPath
+	data.CaddyAdmin = s.App.Cfg.CaddyAdminURL
+	data.CaddyReloadCmd = s.App.Cfg.CaddyReloadCmd
+	data.CaddyPreview = s.Domains.PreviewCaddyfile(r.Context())
 
-		SessionCount: sessions,
-		SessionTTL:   s.App.Cfg.SessionTTL,
-
-		MetricsInterval:  s.App.Cfg.MetricsIntervalSeconds,
-		MetricsRetention: s.App.Cfg.MetricsRetentionHours,
-		JobWorkers:       jobWorkerCount,
-
-		IncusProject: s.App.Cfg.IncusProject,
-	}
+	data.SessionCount = sessions
+	data.MetricsInterval = s.App.Cfg.MetricsIntervalSeconds
+	data.MetricsRetention = s.App.Cfg.MetricsRetentionHours
+	data.JobWorkers = jobWorkerCount
+	data.IncusProject = s.App.Cfg.IncusProject
 
 	if providers, err := s.SSO.ProviderViews(); err != nil {
 		s.log.Warn("could not list sso providers", "err", err)
@@ -404,21 +458,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data.InstanceCount = len(list)
 		data.RunningCount = running
 	}
-
-	// Two-factor state for the signed-in user. A pending setup secret is
-	// shown once, right after generation.
-	if me := userFrom(r); me != nil {
-		if fresh, err := s.App.DB.GetUser(me.ID); err == nil {
-			data.TOTPEnabled = fresh.TOTPEnabled
-			if r.URL.Query().Get("totp") == "setup" && !fresh.TOTPEnabled && fresh.TOTPSecret != "" {
-				data.TOTPSetupSecret = fresh.TOTPSecret
-				data.TOTPSetupURL = auth.ProvisioningURL(fresh.Username, fresh.TOTPSecret)
-				data.TOTPSetupQR = totpQRCode(data.TOTPSetupURL)
-			}
-		}
-	}
-
-	s.render(w, r, "settings", http.StatusOK, data)
+	return nil
 }
 
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
@@ -451,18 +491,23 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 // serveUsersFragments renders the HTMX response for user create/delete: the
 // fresh users list plus out-of-band swaps for the flash and the user count.
 func (s *Server) serveUsersFragments(w http.ResponseWriter, r *http.Request, actionErr error, notice string) {
-	data := usersFragmentData{CSRF: csrfFrom(r), User: userFrom(r), Links: s.SSO.IdentityLabels()}
+	data := usersFragmentData{CSRF: csrfFrom(r), User: userFrom(r)}
 	if actionErr != nil {
 		data.Error = friendlyError(actionErr)
 	} else {
 		data.Notice = notice
 	}
 
-	users, err := s.App.DB.ListUsers()
-	if err != nil {
-		data.Error = friendlyError(err)
-	} else {
-		data.Users = users
+	// A refused request still re-renders the list, which must stay empty
+	// for anyone who may not see the users.
+	if checkAdminAccess(r) == nil {
+		data.Links = s.SSO.IdentityLabels()
+		users, err := s.App.DB.ListUsers()
+		if err != nil {
+			data.Error = friendlyError(err)
+		} else {
+			data.Users = users
+		}
 	}
 
 	if err := s.Renderer.RenderPartial(w, "settings", "users_response", data); err != nil {
@@ -583,6 +628,23 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fresh, err := s.App.DB.GetUser(user.ID)
+	if err != nil {
+		s.totpFailure(w, r, err)
+		return
+	}
+	// Replacing the secret switches enforcement off, so on an account that
+	// already has two-factor it would be a password-free way to disable it.
+	if fresh.TOTPEnabled {
+		s.totpFailure(w, r, errors.New("two-factor is already on — turn it off first to set it up again"))
+		return
+	}
+	if err := s.confirmPassword(fresh, r); err != nil {
+		s.App.Activity.Record(user.Username, "Start two-factor setup", user.Username, "", err)
+		s.totpFailure(w, r, err)
+		return
+	}
+
 	secret, _, err := auth.GenerateTOTPSecret(user.Username)
 	if err != nil {
 		if isHTMX(r) {
@@ -652,7 +714,12 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 
 	s.App.Activity.Record(user.Username, "Enable two-factor", user.Username, "", nil)
 	if isHTMX(r) {
-		s.serveTOTPFragments(w, r, nil, "Two-factor authentication is on.")
+		// Codes are made here so nobody turns 2FA on without a way back in.
+		codes, cerr := s.App.Auth.GenerateRecoveryCodes(user.ID)
+		if cerr != nil {
+			s.log.Error("could not generate recovery codes", "err", cerr)
+		}
+		s.serveTOTPFragmentsWithCodes(w, r, nil, "Two-factor authentication is on.", codes)
 		return
 	}
 	s.succeed(w, r, "/settings", "Two-factor authentication is on.")
@@ -676,14 +743,9 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "/settings", err)
 		return
 	}
-	if !auth.VerifyPassword(fresh.PasswordHash, r.FormValue("current_password")) {
-		badPassword := errors.New("incorrect password")
-		s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", auth.ErrInvalidCredentials)
-		if isHTMX(r) {
-			s.serveTOTPFragments(w, r, badPassword, "")
-			return
-		}
-		s.fail(w, r, "/settings", badPassword)
+	if err := s.confirmPassword(fresh, r); err != nil {
+		s.App.Activity.Record(user.Username, "Disable two-factor", user.Username, "", err)
+		s.totpFailure(w, r, err)
 		return
 	}
 
@@ -704,10 +766,82 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	s.succeed(w, r, "/settings", "Two-factor authentication is off.")
 }
 
+// handleTOTPRecovery replaces the user's recovery codes after confirming the
+// password, and shows the new set once.
+func (s *Server) handleTOTPRecovery(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r)
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	fresh, err := s.App.DB.GetUser(user.ID)
+	if err != nil {
+		s.totpFailure(w, r, err)
+		return
+	}
+	if !fresh.TOTPEnabled {
+		s.totpFailure(w, r, errors.New("turn on two-factor first"))
+		return
+	}
+	if err := s.confirmPassword(fresh, r); err != nil {
+		s.App.Activity.Record(user.Username, "New recovery codes", user.Username, "", err)
+		s.totpFailure(w, r, err)
+		return
+	}
+
+	codes, err := s.App.Auth.GenerateRecoveryCodes(user.ID)
+	s.App.Activity.Record(user.Username, "New recovery codes", user.Username, "", err)
+	if err != nil {
+		s.totpFailure(w, r, err)
+		return
+	}
+
+	if isHTMX(r) {
+		s.serveTOTPFragmentsWithCodes(w, r, nil, "New recovery codes generated. The old ones no longer work.", codes)
+		return
+	}
+	s.renderSettings(w, r, codes)
+}
+
+// confirmPassword asks the signed-in user to prove they know their password
+// before a security setting changes. Accounts that cannot sign in with a
+// password have nothing to confirm, and two-factor never applies to them.
+func (s *Server) confirmPassword(user *models.User, r *http.Request) error {
+	if !sso.PasswordAllowed(user.AuthMethod) {
+		return nil
+	}
+	err := s.App.Auth.ConfirmPassword(user.ID, r.FormValue("current_password"))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		return errors.New("incorrect password")
+	default:
+		return err
+	}
+}
+
+// totpFailure reports a failed two-factor change in place for HTMX, or by
+// redirect otherwise.
+func (s *Server) totpFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if isHTMX(r) {
+		s.serveTOTPFragments(w, r, err, "")
+		return
+	}
+	s.fail(w, r, "/settings", err)
+}
+
 // serveTOTPFragments renders the HTMX response for two-factor operations:
 // the fresh TOTP card plus an out-of-band flash. A pending (unconfirmed)
 // secret is shown again so a mistyped code can simply be retried.
 func (s *Server) serveTOTPFragments(w http.ResponseWriter, r *http.Request, actionErr error, notice string) {
+	s.serveTOTPFragmentsWithCodes(w, r, actionErr, notice, nil)
+}
+
+// serveTOTPFragmentsWithCodes is serveTOTPFragments that also shows freshly
+// generated recovery codes.
+func (s *Server) serveTOTPFragmentsWithCodes(w http.ResponseWriter, r *http.Request, actionErr error, notice string, codes []string) {
 	user := userFrom(r)
 	data := totpFragmentData{CSRF: csrfFrom(r)}
 	if actionErr != nil {
@@ -719,6 +853,10 @@ func (s *Server) serveTOTPFragments(w http.ResponseWriter, r *http.Request, acti
 	if user != nil {
 		if fresh, err := s.App.DB.GetUser(user.ID); err == nil {
 			data.TOTPEnabled = fresh.TOTPEnabled
+			data.RecoveryCodes = codes
+			if fresh.TOTPEnabled {
+				data.RecoveryLeft = s.App.Auth.RecoveryCodesLeft(fresh.ID)
+			}
 			if !fresh.TOTPEnabled && fresh.TOTPSecret != "" {
 				data.TOTPSetupSecret = fresh.TOTPSecret
 				data.TOTPSetupURL = auth.ProvisioningURL(fresh.Username, fresh.TOTPSecret)
