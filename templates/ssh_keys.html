@@ -1,0 +1,39 @@
+{{define "title"}}SSH keys{{end}}
+{{define "content"}}
+<div class="wrap">
+  <div class="page-head">
+    <div class="grow">
+      <h1>SSH keys</h1>
+      <p class="page-sub">Your personal library of server access keys. Keys are isolated to your account: no other tenant can see or use them, and they are offered when you create an instance.</p>
+    </div>
+  </div>
+
+  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+
+  <div class="card" id="ssh-keys-card">
+    <div class="card-head">
+      <div class="grow">
+        <div class="card-title">Saved keys</div>
+        <div class="card-sub">Only public keys are stored. Private keys, when generated here, are shown once and never saved.</div>
+      </div>
+      <span class="muted small">{{len .Keys}} key{{if ne (len .Keys) 1}}s{{end}}</span>
+    </div>
+    <div id="ssh-keys-card-body" style="padding:0 18px 18px">
+      {{template "ssh_keys_body" .}}
+    </div>
+  </div>
+
+  <div class="card mt-24">
+    <div class="card-head">
+      <div class="grow"><div class="card-title">How keys are used</div></div>
+    </div>
+    <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.9">
+      <li>On instance creation, pick a saved key — it is installed for <span class="mono">root</span> and for the web-console account.</li>
+      <li>Instances created with a key and no password have password login disabled; SSH becomes key-only.</li>
+      <li>The in-browser terminal uses Incus <span class="mono">exec</span>, so it does not need an SSH password.</li>
+      <li>Deleting a key here does not change instances that already have it installed — rebuild one to rotate.</li>
+    </ol>
+  </div>
+</div>
+{{end}}

@@ -215,31 +215,39 @@
       {{if canAdmin .User}}
       <div class="field mt-16">
         <label for="owner_id">Create on behalf of</label>
-        <select id="owner_id" name="owner_id">
+        <select id="owner_id" name="owner_id" hx-get="/create/keys" hx-trigger="change"
+                hx-target="#ssh-key-select" hx-swap="innerHTML">
           <option value="">Me ({{.User.Username}})</option>
           {{range .Owners}}
           {{if ne .ID $.User.ID}}<option value="{{.ID}}">{{.Username}} ({{.Role}})</option>{{end}}
           {{end}}
         </select>
-        <p class="hint">The instance and its history belong to the selected account. Leave as-is to own it yourself.</p>
+        <p class="hint">The instance and its history belong to the selected account. Leave as-is to own it yourself. The saved-key list follows this choice.</p>
       </div>
       {{end}}
 
       <div class="label" style="margin-top:20px">SSH access</div>
-      <p class="card-sub" style="margin-bottom:12px">At least one is required. SSH is set up automatically — connect as <span class="mono">root@&lt;private-ip&gt;</span>.</p>
+      <p class="card-sub" style="margin-bottom:12px">At least one credential is required. Prefer a saved key: with a key and no password, password login is disabled entirely. Connect as <span class="mono">root@&lt;private-ip&gt;</span>.</p>
       <div class="field-row">
         <div class="field">
-          <label for="root_password">Root password</label>
-          <input id="root_password" name="root_password" type="password" minlength="8" autocomplete="new-password"
-                 placeholder="8+ characters" value="{{.Form.RootPassword}}">
-          <p class="hint">Enables password login for root.</p>
+          <label for="ssh-key-select">Saved key</label>
+          <select id="ssh-key-select" name="ssh_key_id">
+            {{template "ssh_key_options" .}}
+          </select>
+          <p class="hint">Keys from your own vault, or from the owner selected above. <a href="/ssh-keys">Manage keys</a>.</p>
         </div>
         <div class="field">
-          <label for="ssh_key">SSH public key</label>
+          <label for="ssh_key">Paste a public key instead</label>
           <input id="ssh_key" name="ssh_key" type="text" autocomplete="off" spellcheck="false"
                  placeholder="ssh-ed25519 AAAA..." value="{{.Form.SSHKey}}">
-          <p class="hint">Enables key login for root.</p>
+          <p class="hint">A saved key above takes priority over this field.</p>
         </div>
+      </div>
+      <div class="field mt-8">
+        <label for="root_password">Root password (optional fallback)</label>
+        <input id="root_password" name="root_password" type="password" minlength="8" autocomplete="new-password"
+               placeholder="8+ characters" value="{{.Form.RootPassword}}">
+        <p class="hint">Leave empty for key-only access, which is more secure. Set one only if you also want password login for root. The web console does not need it.</p>
       </div>
     </div>
 

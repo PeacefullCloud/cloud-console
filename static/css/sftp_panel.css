@@ -1,0 +1,180 @@
+/* Thin collapsible SFTP file panel inside the standalone console window.
+   It deliberately uses only same-origin assets: no fonts, images or CDN. */
+
+.console-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.console-body #terminal {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The terminal is a docked surface, not a floating card: no rounded corners
+   and no shadow, and it must never paint over the footer's SSH notice. */
+#terminal,
+#terminal .wterm,
+#terminal .wterm * {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.console-foot { flex: 0 0 auto; }
+
+.sftp-panel {
+  flex: 0 0 286px;
+  width: 286px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0b1630;
+  border-right: 1px solid #24406e;
+  color: #cbd8ef;
+  font-size: 12px;
+  transition: width .15s ease, flex-basis .15s ease;
+}
+.sftp-panel.collapsed {
+  flex-basis: 34px;
+  width: 34px;
+}
+.sftp-panel.collapsed .sftp-inner,
+.sftp-panel.collapsed .sftp-state,
+.sftp-panel.collapsed .sftp-title { display: none; }
+.sftp-panel.collapsed .sftp-head { justify-content: center; padding: 8px 0; }
+
+.sftp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: #12234a;
+  border-bottom: 1px solid #24406e;
+  flex: 0 0 auto;
+}
+.sftp-title { font-weight: 700; letter-spacing: .02em; color: #eaf1ff; }
+.sftp-state {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8fa8cf;
+  font-size: 11px;
+}
+.sftp-state.is-ok { color: #8fe0ad; }
+.sftp-state.is-err { color: #ff9a9a; }
+
+.sftp-icon {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid #3a5c8e;
+  border-radius: 4px;
+  background: #1b3260;
+  color: #dce8fb;
+  cursor: pointer;
+  line-height: 1;
+}
+.sftp-icon:hover { background: #275296; }
+.sftp-panel.collapsed .sftp-icon { transform: rotate(180deg); }
+
+.sftp-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sftp-nav, .sftp-tools {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #1d3562;
+  flex: 0 0 auto;
+}
+.sftp-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a9c6ee;
+  font-size: 11px;
+}
+
+.sftp-btn {
+  padding: 3px 7px;
+  border: 1px solid #3a5c8e;
+  border-radius: 4px;
+  background: #162b53;
+  color: #dbe7fa;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sftp-btn:hover:not(:disabled) { background: #275296; }
+.sftp-btn:disabled { opacity: .4; cursor: default; }
+.sftp-danger { border-color: #7a3b48; color: #ffb4b4; }
+.sftp-danger:hover:not(:disabled) { background: #6b2735; }
+
+.sftp-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+  scrollbar-color: #375489 #0b1630;
+}
+.sftp-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px;
+  cursor: default;
+}
+.sftp-row:hover { background: #152b56; }
+.sftp-row.selected { background: #21457e; }
+.sftp-row input { accent-color: #5b9cff; margin: 0; flex: 0 0 auto; }
+.sftp-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #dce8fb;
+}
+.sftp-name.dir { color: #9fd0ff; cursor: pointer; }
+.sftp-name.dir:hover { text-decoration: underline; }
+.sftp-meta { flex: 0 0 auto; color: #7793bd; font-size: 10px; }
+.sftp-empty { padding: 14px 10px; color: #7f98be; }
+
+.sftp-status {
+  flex: 0 0 auto;
+  min-height: 17px;
+  padding: 3px 9px;
+  border-top: 1px solid #1d3562;
+  color: #93b4e2;
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sftp-status.is-err { color: #ff9a9a; }
+.sftp-status.is-ok { color: #9ce9bd; }
+
+.sftp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 7px 8px;
+  border-top: 1px solid #1d3562;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  .sftp-panel { flex-basis: 220px; width: 220px; }
+}

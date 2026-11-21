@@ -98,6 +98,10 @@
 
     <div class="nav-group">
       <div class="nav-title">Operations</div>
+      <a class="nav-item {{if eq .Nav "ssh-keys"}}active{{end}}" href="/ssh-keys">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3l1 1-2 2 1 1-2 2-1-1-3.2 3.2"/></svg>
+        SSH keys
+      </a>
       <a class="nav-item {{if eq .Nav "activity"}}active{{end}}" href="/activity">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
         Activity

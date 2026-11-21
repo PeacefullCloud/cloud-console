@@ -4,13 +4,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net"
 	"io"
+	"net"
 	"net/http"
-	"sync"
-	"time"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/skip2/go-qrcode"
 
@@ -158,7 +158,6 @@ var (
 	detectedPublicIP     string
 	detectedPublicIPOnce sync.Once
 )
-
 
 // isPublicIPv4 reports whether ip is a globally routable IPv4 address, excluding
 // loopback, private, link-local and carrier-grade NAT ranges.
@@ -823,6 +822,9 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	next := r.FormValue("new_password")
 
 	err := s.App.Auth.ChangePassword(user.ID, current, next)
+	if err == nil {
+		s.revokeSFTPUser(user.ID, "")
+	}
 	s.App.Activity.Record(user.Username, "Change password", user.Username, "", err)
 
 	if err != nil {

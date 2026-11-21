@@ -71,11 +71,16 @@ type Server struct {
 	consoleMu       sync.Mutex
 	consoleSessions int
 	consoleByUser   map[int64]int
+
+	// SFTP file-panel sessions, keyed by the console session token hash.
+	// Closing one on logout mirrors closing the terminal itself.
+	sftpMu       sync.Mutex
+	sftpSessions map[string]*sftpSession
 }
 
 // New builds the server and registers every route.
 func New(deps Deps) *Server {
-	s := &Server{Deps: deps, log: deps.App.Log, mux: http.NewServeMux(), jobFeeds: map[string]*feed{}}
+	s := &Server{Deps: deps, log: deps.App.Log, mux: http.NewServeMux(), jobFeeds: map[string]*feed{}, sftpSessions: map[string]*sftpSession{}}
 	s.streamCtx, s.stopStreams = context.WithCancel(context.Background())
 	s.consoleCtx, s.stopConsoles = context.WithCancel(context.Background())
 	s.routes()
@@ -91,6 +96,16 @@ func (s *Server) CloseEventStreams() {
 	}
 	if s.stopConsoles != nil {
 		s.stopConsoles()
+	}
+	s.sftpMu.Lock()
+	sessions := make([]*sftpSession, 0, len(s.sftpSessions))
+	for _, sess := range s.sftpSessions {
+		sessions = append(sessions, sess)
+	}
+	s.sftpSessions = map[string]*sftpSession{}
+	s.sftpMu.Unlock()
+	for _, sess := range sessions {
+		sess.shutdown()
 	}
 }
 
@@ -128,6 +143,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /instances", s.handleInstances)
 	m.HandleFunc("GET /create", s.handleCreatePage)
 	m.HandleFunc("GET /create/blueprints", s.handleBlueprints)
+	m.HandleFunc("GET /create/keys", s.handleCreateKeys)
 	m.HandleFunc("POST /instances", s.handleCreateSubmit)
 
 	m.HandleFunc("GET /instances/{name}", s.requireInstance(s.handleInstance))
@@ -138,6 +154,7 @@ func (s *Server) routes() {
 	// by guessing a name in either URL.
 	m.HandleFunc("GET /instances/{name}/console", s.requireInstance(s.handleConsolePage))
 	m.HandleFunc("GET /instances/{name}/console/ws", s.requireInstance(s.handleConsoleSocket))
+	m.HandleFunc("GET /instances/{name}/console/sftp/ws", s.requireInstance(s.handleSFTPSocket))
 
 	m.HandleFunc("POST /instances/{name}/state", s.requireInstance(s.handleInstanceState))
 	m.HandleFunc("POST /instances/{name}/delete", s.requireInstance(s.handleInstanceDelete))
@@ -168,6 +185,14 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /activity", s.handleActivity)
 	m.HandleFunc("GET /activity/export.csv", s.handleActivityExport)
 	m.HandleFunc("GET /metrics", s.handleMetrics)
+
+	// SSH key vault. Every operation is scoped to the signed-in user.
+	m.HandleFunc("GET /ssh-keys", s.handleSSHKeys)
+	m.HandleFunc("POST /ssh-keys", s.handleSSHKeyCreate)
+	m.HandleFunc("POST /ssh-keys/generate", s.handleSSHKeyGenerate)
+	m.HandleFunc("POST /ssh-keys/{id}/delete", s.handleSSHKeyDelete)
+	m.HandleFunc("POST /ssh-keys/{id}/rename", s.handleSSHKeyRename)
+
 	m.HandleFunc("GET /settings", s.handleSettings)
 
 	m.HandleFunc("POST /settings/users", s.handleUserCreate)

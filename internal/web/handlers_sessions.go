@@ -103,6 +103,8 @@ func (s *Server) handleSessionRevoke(w http.ResponseWriter, r *http.Request) {
 		err = derr
 	} else if !ok {
 		err = errors.New("that session no longer exists")
+	} else {
+		s.revokeSFTPHandle(handle)
 	}
 	s.App.Activity.Record(user.Username, "Revoke session", user.Username, "", err)
 
@@ -120,7 +122,9 @@ func (s *Server) handleSessionsRevokeOthers(w http.ResponseWriter, r *http.Reque
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	n, err := s.App.DB.DeleteOtherUserSessions(user.ID, auth.HashToken(tokenFrom(r)))
+	currentHash := auth.HashToken(tokenFrom(r))
+	n, err := s.App.DB.DeleteOtherUserSessions(user.ID, currentHash)
+	s.revokeSFTPUser(user.ID, currentHash)
 	s.App.Activity.Record(user.Username, "Revoke other sessions", user.Username, "", err)
 
 	notice := "No other devices were signed in."
@@ -159,6 +163,7 @@ func (s *Server) handleUserPasswordReset(w http.ResponseWriter, r *http.Request)
 	} else {
 		label = target.Username
 		if err = s.App.Auth.ResetPassword(target.ID, next); err == nil {
+			s.revokeSFTPUser(target.ID, "")
 			notice = "Password for " + target.Username + " reset. They were signed out everywhere."
 		}
 	}

@@ -241,6 +241,9 @@ func (s *Server) createData(w http.ResponseWriter, r *http.Request) (createData,
 		}
 	}
 
+	// Saved keys belong to the instance owner, not necessarily the actor.
+	data.SSHKeys = s.createKeyOptions(r)
+
 	return data, nil
 }
 
@@ -317,6 +320,27 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Kind == "" {
 		req.Kind = instances.KindContainer
+	}
+
+	// A saved key is resolved against the instance owner's vault, never the
+	// actor's. Even an admin creating on behalf of a tenant cannot select a
+	// key from a different tenant, because the ID is looked up with ownerID.
+	if raw := strings.TrimSpace(r.FormValue("ssh_key_id")); raw != "" {
+		id, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil || id <= 0 {
+			s.fail(w, r, "/create", errors.New("the selected key is not available for this account"))
+			return
+		}
+		key, kerr := s.App.DB.GetSSHKeyForUser(ownerID, id)
+		if kerr != nil {
+			s.fail(w, r, "/create", errors.New("the selected key is not available for this account"))
+			return
+		}
+		if verr := instances.ValidateSSHKey(key.PublicKey); verr != nil {
+			s.fail(w, r, "/create", errors.New("the selected key is invalid"))
+			return
+		}
+		req.SSHKey = key.PublicKey
 	}
 
 	// A preset plan carries its own resources; "custom" uses the number fields.

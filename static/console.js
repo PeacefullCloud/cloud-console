@@ -55,9 +55,15 @@
   var encoder = new TextEncoder();
 
   function frame(tag, bytes) {
-    var out = new Uint8Array(bytes.length + 1);
+    // wterm occasionally emits an empty/undefined binary payload (for example
+    // on a paste with no data). Never let that throw on bytes.length.
+    var data;
+    if (bytes instanceof Uint8Array) { data = bytes; }
+    else if (typeof bytes === "string") { data = encoder.encode(bytes); }
+    else { data = new Uint8Array(0); }
+    var out = new Uint8Array(data.length + 1);
     out[0] = tag;
-    out.set(bytes, 1);
+    out.set(data, 1);
     return out;
   }
 
@@ -85,15 +91,30 @@
 
   function layout() {
     var top = host.getBoundingClientRect().top;
-    var available = window.innerHeight - top - 8;
-    host.style.height = Math.max(200, available) + "px";
+    // The footer (and its SSH notice) sits outside .console-body. Measuring
+    // it keeps the terminal above the footer instead of spilling over it.
+    var foot = document.querySelector(".console-foot");
+    var footHeight = foot ? foot.getBoundingClientRect().height : 0;
+    var available = window.innerHeight - top - footHeight;
+    host.style.height = Math.max(160, available) + "px";
+  }
+
+  // A path inserted from the file panel must never be able to carry terminal
+  // control sequences or a newline into the shell. Strip every C0 control
+  // character and cap the length before sending it as typed input.
+  function sanitizeInsertText(text) {
+    return String(text).replace(/[\x00-\x1f\x7f]/g, "").slice(0, 4096);
   }
 
   transport = new window.wterm.WebSocketTransport({
     url: wsURL,
     reconnect: false,
     onData: function (data) { sniffBracketed(data); term.write(data); },
-    onOpen: function () { setStatus("connected", "ok"); },
+    onOpen: function () {
+      setStatus("connected", "ok");
+      // The file panel waits for a working shell before it connects.
+      window.dispatchEvent(new CustomEvent("console:connected"));
+    },
     onClose: function () { setStatus("disconnected — check session or instance state", "err"); },
     onError: function () { setStatus("connection error", "err"); }
   });
@@ -194,6 +215,27 @@
   window.addEventListener("resize", function () {
     layout();
     if (term) { try { term.fit(); } catch (e) { /* noop */ } }
+  });
+
+  // The collapsible file panel changes the terminal's width without a window
+  // resize, so refit the PTY explicitly and hand focus back to the shell.
+  window.addEventListener("console:relayout", function () {
+    layout();
+    if (term) {
+      try { term.fit(); } catch (e) { /* noop */ }
+      try { term.focus(); } catch (e) { /* noop */ }
+    }
+  });
+
+  // "Copy path to terminal" from the file panel types into the same shell.
+  window.addEventListener("sftp:insert", function (event) {
+    var text = sanitizeInsertText(event.detail && event.detail.text);
+    if (!text || !transport) { return; }
+    // Bracketed paste keeps a path containing shell metacharacters from being
+    // interpreted as keystrokes by the line editor.
+    var payload = bracketedPaste ? "\x1B[200~" + text + "\x1B[201~" : text;
+    try { transport.send(frame(FRAME_INPUT, encoder.encode(payload))); } catch (e) { /* disconnected */ }
+    if (term) { try { term.focus(); } catch (e) { /* noop */ } }
   });
 
   window.addEventListener("beforeunload", function () {

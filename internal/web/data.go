@@ -77,6 +77,23 @@ type createData struct {
 	// Owners lists the tenants an administrator may create for. It is empty
 	// for everyone else.
 	Owners []models.User
+
+	// SSHKeys lists the saved keys available to the instance owner. Admins
+	// see keys of the owner selected in the "Create on behalf of" field.
+	SSHKeys []keyOption
+}
+
+// keyOption is one saved public key in the create wizard's selector.
+type keyOption struct {
+	ID          int64
+	Label       string
+	Fingerprint string
+}
+
+// keyOptionsFragmentData is the context for the HTMX-refreshed key selector.
+type keyOptionsFragmentData struct {
+	SSHKeys []keyOption
+	Form    createForm // empty: changing owners clears the previous selection
 }
 
 type platformInfo struct {
@@ -100,6 +117,7 @@ type createForm struct {
 	Kind         string // container | virtual-machine
 	RootPassword string
 	SSHKey       string
+	SSHKeyID     int64 // saved key chosen from SSHKeys, 0 = none
 	Size         string
 	StoragePool  string
 	CPU          int
@@ -293,6 +311,31 @@ type activityData struct {
 
 	// Jobs shadows baseData.Jobs so the activity page can show a longer history.
 	Jobs []models.Job
+}
+
+// --- SSH keys -------------------------------------------------------------
+
+// sshKeysData is the key-management page. PrivateKey is populated only in the
+// response that immediately follows a generation, and is never stored.
+type sshKeysData struct {
+	baseData
+	Keys           []models.SSHKey
+	PrivateKey     string
+	PrivateKeyName string
+	Notice         string
+}
+
+// sshKeysFragmentData is the HTMX context for key create/generate/rename/delete.
+// Every response re-renders the whole card body, so a previously revealed
+// private key disappears as soon as any other key action is performed.
+type sshKeysFragmentData struct {
+	CSRF           string
+	User           *models.User
+	Keys           []models.SSHKey
+	Error          string
+	Notice         string
+	PrivateKey     string
+	PrivateKeyName string
 }
 
 type settingsData struct {

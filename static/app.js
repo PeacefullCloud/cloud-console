@@ -100,6 +100,28 @@
       return;
     }
 
+    // One-time private key download: <button data-download-target="#id"
+    // data-download-name="key.pem">. The key is read from the page, never
+    // re-fetched, so it cannot be recovered after a reload.
+    var downloadBtn = event.target.closest("[data-download-target]");
+    if (downloadBtn) {
+      var src = document.querySelector(downloadBtn.getAttribute("data-download-target"));
+      var text = src ? (src.value !== undefined ? src.value : src.textContent) : "";
+      if (!text) {
+        return;
+      }
+      var blob = new Blob([text], { type: "application/x-pem-file" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = downloadBtn.getAttribute("data-download-name") || "ssh-key.pem";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      return;
+    }
+
     // Close open dropdown menus when clicking elsewhere.
     if (!event.target.closest("details.menu")) {
       document.querySelectorAll("details.menu[open]").forEach(function (menu) {

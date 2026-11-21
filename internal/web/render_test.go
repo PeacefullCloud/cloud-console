@@ -158,6 +158,14 @@ func TestRenderEveryPage(t *testing.T) {
 			Pools:        []poolInfo{{Name: "default", Driver: "zfs"}},
 			DefaultImage: "ubuntu-24.04",
 			Form:         createForm{Platform: "os", Image: "ubuntu-24.04", Size: DefaultSizes()[2].Value()},
+			SSHKeys:      []keyOption{{ID: 7, Label: "laptop", Fingerprint: "SHA256:abc"}},
+		}},
+		{"ssh_keys", sshKeysData{
+			baseData:       sampleBase(),
+			Keys:           []models.SSHKey{{ID: 1, OwnerID: 1, Name: "laptop", Fingerprint: "SHA256:abc", PublicKey: "ssh-ed25519 AAAA test"}},
+			PrivateKey:     "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
+			PrivateKeyName: "laptop.pem",
+			Notice:         "Generated key laptop.",
 		}},
 		{"instance", instanceData{
 			baseData:          sampleBase(),

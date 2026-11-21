@@ -47,6 +47,21 @@ console. It signs in automatically as `cloud-user` (passwordless sudo via
 `sudo -i`), works for both VMs and containers, and needs no SSH port, password
 or private key in the browser.
 
+**File panel** — the console window has a thin, collapsible file manager on its
+left edge. It opens when the terminal connects and browses the terminal user's
+home over SFTP, using `sftp-server` through Incus `exec` (no SSH port, key or
+password). Select single or multiple items, copy/paste, delete, upload and
+download files in parallel, and copy a path or insert it into the terminal.
+Each browser connection has its own SFTP client, bound to the console session
+token: logout, session revocation, password changes and expiry close it.
+
+**SSH keys** — a tenant-isolated vault in the left sidebar. Add a public key by
+pasting or uploading a `.pub` file, or generate an Ed25519 keypair. Only public
+keys are stored; a generated private key is shown once and never saved.
+Saved keys can be assigned to new instances, including when an administrator
+creates on behalf of another tenant. With a key and no root password, SSH
+password login is disabled on the instance.
+
 **Domains** — attach hostnames to instances. The console rewrites the host
 Caddyfile and reloads Caddy, which issues and renews HTTPS certificates
 automatically. Create the A record; everything else is automatic.
@@ -479,9 +494,12 @@ terminal is gated at every step:
 - The socket requires a same-origin `Origin` header and, when configured, an
   allowed `Host`, which prevents cross-site websocket hijacking and DNS
   rebinding. `CONSOLE_TERMINAL_ALLOWED_HOSTS` should be set on a public install.
-- No SSH service, key or password is exposed to the browser. The console uses
-  its existing Unix-socket access to Incus and attaches to an interactive exec
-  inside the instance, then starts a login shell for `cloud-user` as root.
+- No SSH service or credential is needed by the browser terminal. The console
+  uses its existing Unix-socket access to Incus and attaches to an interactive
+  exec inside the instance, then starts a login shell for `cloud-user` as root.
+  The only private key that ever reaches a browser is one generated on demand
+  by the SSH keys page, shown once with `Cache-Control: no-store` and never
+  persisted.
 - Sessions are capped globally and per tenant, time out when idle, and have a
   maximum lifetime. Closing the window, signing out, or stopping the console
   tears down the guest process. Every open/close is audit logged.

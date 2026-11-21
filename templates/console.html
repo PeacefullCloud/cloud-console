@@ -11,9 +11,11 @@
 <title>{{.Instance}} — Web Console · Peaceful Cloud Console</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/css/wterm.css">
+<link rel="stylesheet" href="/static/css/sftp_panel.css?v=2">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
 <script src="/static/js/wterm.js?v=1" defer></script>
-<script src="/static/console.js?v=1" defer></script>
+<script src="/static/console.js?v=2" defer></script>
+<script src="/static/sftp_panel.js?v=2" defer></script>
 </head>
 <body class="console-window"
       data-instance="{{.Instance}}"
@@ -22,7 +24,8 @@
       data-cols="{{.Cols}}"
       data-rows="{{.Rows}}"
       data-max-input="{{.MaxInputBytes}}"
-      data-running="{{.Running}}">
+      data-running="{{.Running}}"
+      data-sftp-ws-path="/instances/{{.Instance}}/console/sftp/ws">
 
 <div class="console-shell">
   <header class="console-bar">
@@ -45,7 +48,38 @@
   <div class="console-warn">This instance is stopped. Start it, then choose Reconnect.</div>
   {{end}}
 
-  <div id="terminal" aria-label="Terminal for {{.Instance}}"></div>
+  <div class="console-body">
+    <aside class="sftp-panel" id="sftp-panel" aria-label="File manager for {{.Instance}}">
+      <div class="sftp-head">
+        <span class="sftp-title">Files</span>
+        <span class="sftp-state" id="sftp-state" role="status">waiting for shell…</span>
+        <button type="button" class="sftp-icon" id="sftp-toggle" title="Collapse file panel" aria-label="Collapse file panel">‹</button>
+      </div>
+      <div class="sftp-inner">
+        <div class="sftp-nav">
+          <button type="button" class="sftp-icon" id="sftp-up" title="Parent folder" aria-label="Parent folder">↑</button>
+          <span class="sftp-path mono" id="sftp-path" title="Current folder">~</span>
+        </div>
+        <div class="sftp-tools">
+          <button type="button" class="sftp-btn" id="sftp-new" title="New folder">+ Folder</button>
+          <button type="button" class="sftp-btn" id="sftp-upload" title="Upload files">↑ Upload</button>
+          <button type="button" class="sftp-btn" id="sftp-refresh" title="Refresh">↻</button>
+        </div>
+        <div class="sftp-list" id="sftp-list" aria-multiselectable="true"></div>
+        <div class="sftp-status" id="sftp-status" role="status"></div>
+        <div class="sftp-actions">
+          <button type="button" class="sftp-btn" id="sftp-copy" title="Copy selected items">Copy</button>
+          <button type="button" class="sftp-btn" id="sftp-paste" title="Paste into this folder">Paste</button>
+          <button type="button" class="sftp-btn sftp-danger" id="sftp-delete" title="Delete selected items">Delete</button>
+          <button type="button" class="sftp-btn" id="sftp-download" title="Download selected files">Download</button>
+          <button type="button" class="sftp-btn" id="sftp-copypath" title="Copy full path to clipboard">Copy path</button>
+          <button type="button" class="sftp-btn" id="sftp-terminal" title="Copy path to terminal">Copy path to terminal</button>
+        </div>
+        <input type="file" id="sftp-file" multiple hidden>
+      </div>
+    </aside>
+    <div id="terminal" aria-label="Terminal for {{.Instance}}"></div>
+  </div>
 
   <footer class="console-foot">
     <span>Signed in as <strong class="mono">{{.LoginUser}}</strong> · use <code>sudo -i</code> to become root</span>

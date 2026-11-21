@@ -345,10 +345,10 @@ exec /bin/sh -l`
 				}
 				controlMu.Unlock()
 			default:
-				// Tolerate raw frames from non-browser clients.
-				if _, err := toGuestW.Write(data); err != nil {
-					return
-				}
+				// Only the two defined frame types may reach the shell. An
+				// unknown tag is a malformed or hostile client, not a reason
+				// to forward arbitrary bytes into the guest.
+				continue
 			}
 		}
 	}()

@@ -27,6 +27,18 @@ type User struct {
 	TOTPEnabled bool
 }
 
+// SSHKey is a tenant's stored SSH public key. Only the public half is kept:
+// a keypair generated in the console returns its private key to the user once
+// and never persists it. OwnerID is the only tenant that may use this key.
+type SSHKey struct {
+	ID          int64
+	OwnerID     int64
+	Name        string
+	PublicKey   string // authorized_keys line: "ssh-ed25519 AAAA... comment"
+	Fingerprint string // e.g. "SHA256:AbC..."
+	CreatedAt   time.Time
+}
+
 // InstanceMeta is the console-side record for an Incus instance. Resource limits
 // and live state are read from Incus, not from here.
 type InstanceMeta struct {

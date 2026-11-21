@@ -353,6 +353,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if user := userFrom(r); user != nil {
+		// An open file panel must not outlive the console session that
+		// created its SFTP connection.
+		s.revokeSFTPUser(user.ID, "")
 		s.App.Activity.Record(user.Username, "Sign out", "", "", nil)
 	}
 
