@@ -71,7 +71,7 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Snapshots.All()
+	list, err := s.Snapshots.All(scopeFrom(r))
 	if err != nil {
 		s.renderError(w, r, "Snapshots", "snapshots", err)
 		return

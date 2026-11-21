@@ -41,6 +41,24 @@ func TestWriteDesignPreview(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outDir, "style.css"), css, 0o644); err != nil {
 		t.Fatalf("write stylesheet: %v", err)
 	}
+	// The standalone console window loads its own assets from /static/. Mirror
+	// the few it needs so the preview also works when served over HTTP.
+	for _, asset := range []string{
+		"static/css/wterm.css", "static/js/wterm.js", "static/console.js",
+		"static/wasm/wterm.wasm",
+	} {
+		body, err := os.ReadFile(filepath.Join("..", "..", asset))
+		if err != nil {
+			t.Fatalf("read %s: %v", asset, err)
+		}
+		dest := filepath.Join(outDir, filepath.FromSlash(asset))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dest, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	renderer := newTestRenderer(t)
 	pages := previewPages()
@@ -49,8 +67,8 @@ func TestWriteDesignPreview(t *testing.T) {
 		var sb strings.Builder
 
 		var renderErr error
-		if preview.file == "login" {
-			renderErr = renderer.ExecuteStandalone(&sb, "templates/login.html", "login_page", preview.data)
+		if preview.standalone != "" {
+			renderErr = renderer.ExecuteStandalone(&sb, "templates/"+preview.file+".html", preview.standalone, preview.data)
 		} else {
 			renderErr = renderer.Execute(&sb, preview.page, preview.data)
 		}
@@ -73,9 +91,10 @@ func TestWriteDesignPreview(t *testing.T) {
 
 // previewPage is one HTML file to write.
 type previewPage struct {
-	file string
-	page string
-	data any
+	file       string
+	page       string
+	data       any
+	standalone string // template name for pages without the shared layout
 }
 
 // previewPages builds representative data for every screen.
@@ -168,7 +187,16 @@ func previewPages() []previewPage {
 	}
 
 	pages := []previewPage{
-		{file: "login", page: "login", data: loginData{Title: "Sign in", CSRF: "preview", Notice: "Sign in to manage Incus instances."}},
+		{file: "login", page: "login", standalone: "login_page", data: loginData{Title: "Sign in", CSRF: "preview", Notice: "Sign in to manage Incus instances."}},
+		{file: "console", page: "console", standalone: "console_page", data: consoleData{
+			baseData:      base,
+			Instance:      inst.Name,
+			LoginUser:     "cloud-user",
+			Running:       true,
+			Cols:          100,
+			Rows:          30,
+			MaxInputBytes: 262144,
+		}},
 		{file: "dashboard", page: "dashboard", data: dashboardData{
 			baseData:  base,
 			Instances: list,

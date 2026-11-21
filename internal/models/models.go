@@ -17,6 +17,10 @@ type User struct {
 	CreatedAt    time.Time
 	LastLoginAt  *time.Time
 
+	// MaxInstances is the per-user instance quota. 0 means unlimited; the
+	// host-wide limit still applies.
+	MaxInstances int
+
 	// TOTP two-factor state. Secret is stored from setup start; Enabled
 	// flips on only after a code from the authenticator app is confirmed.
 	TOTPSecret  string
@@ -80,7 +84,8 @@ type Backup struct {
 	CreatedAt    time.Time
 }
 
-// Activity is a single audit-log entry.
+// Activity is a single audit-log entry. OwnerID is the tenant the entry is
+// about: the owner of the target instance, or the acting user otherwise.
 type Activity struct {
 	ID       int64
 	TS       time.Time
@@ -89,6 +94,7 @@ type Activity struct {
 	Target   string
 	Detail   string
 	Status   string // ok | error
+	OwnerID  int64
 }
 
 // Metric is one monitoring sample for an instance.
@@ -105,7 +111,9 @@ type Metric struct {
 	NetTxBytes   int64
 }
 
-// Job tracks a long-running operation so the UI can follow progress.
+// Job tracks a long-running operation so the UI can follow progress. OwnerID
+// is the tenant the job belongs to (the target instance's owner, or the owner
+// chosen when creating an instance).
 type Job struct {
 	ID        string
 	Kind      string
@@ -116,9 +124,27 @@ type Job struct {
 	Message   string
 	Error     string
 	CreatedBy string
+	OwnerID   int64
 	CreatedAt time.Time
 	StartedAt *time.Time
 	EndedAt   *time.Time
+}
+
+// Scope limits queries to the data one console user may see. Admins see
+// everything, including instances created outside the console.
+type Scope struct {
+	UserID int64
+	Admin  bool
+}
+
+// All reports whether the scope may see every owner's data.
+func (s Scope) All() bool { return s.Admin }
+
+// CanAccessOwner reports whether the scope may see data owned by ownerID.
+// Unowned records (ownerID 0, including instances created outside the console)
+// are visible to administrators only.
+func (s Scope) CanAccessOwner(ownerID int64) bool {
+	return s.Admin || (ownerID > 0 && ownerID == s.UserID)
 }
 
 // Setting is a simple key/value configuration entry.

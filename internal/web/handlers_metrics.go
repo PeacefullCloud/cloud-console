@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/peaceful/cloud-console/internal/auth"
+	"github.com/peaceful/cloud-console/internal/models"
 )
 
 // metricsAuthorized reports whether the request carries the configured
@@ -52,7 +53,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "console_up 1\n")
 
 	incusUp := 1
-	list, err := s.Instances.List(r.Context())
+	list, err := s.Instances.List(r.Context(), models.Scope{Admin: true})
 	if err != nil {
 		incusUp = 0
 		s.log.Warn("metrics: could not list instances", "err", err)

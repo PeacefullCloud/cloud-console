@@ -25,13 +25,15 @@ func isHTMX(r *http.Request) bool {
 // --- dashboard ------------------------------------------------------------
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Instances.List(r.Context())
+	scope := scopeFrom(r)
+
+	list, err := s.Instances.List(r.Context(), scope)
 	if err != nil {
 		s.renderError(w, r, "Getting started", "getting-started", err)
 		return
 	}
 
-	totals, err := s.Instances.Totals(r.Context(), list)
+	totals, err := s.Instances.Totals(r.Context(), list, scope)
 	if err != nil {
 		s.log.Warn("could not compute totals", "err", err)
 	}
@@ -42,13 +44,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		host = &monitoringHostFallback
 	}
 
-	activity, err := s.App.DB.ListActivity(8, 0)
+	activity, err := s.App.DB.ListActivityScoped(scope, 8, 0)
 	if err != nil {
 		s.log.Warn("could not read activity", "err", err)
 	}
 
 	data := dashboardData{
-		baseData:  s.withJobs(s.newBase(w, r, "getting-started", "Getting started")),
+		baseData:  s.withJobs(s.newBase(w, r, "getting-started", "Getting started"), r),
 		Instances: list,
 		Totals:    totals,
 		Host:      host,
@@ -66,7 +68,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	list, err := s.Instances.List(r.Context())
+	list, err := s.Instances.List(r.Context(), scopeFrom(r))
 	if err != nil {
 		s.renderError(w, r, "Instances", "instances", err)
 		return
@@ -79,7 +81,7 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	running, stopped := instances.CountByStatus(list)
 
 	data := instancesData{
-		baseData:  s.withJobs(s.newBase(w, r, "instances", "Instances")),
+		baseData:  s.withJobs(s.newBase(w, r, "instances", "Instances"), r),
 		Instances: list,
 		Groups:    s.groupByPool(list),
 		Running:   running,
@@ -232,6 +234,13 @@ func (s *Server) createData(w http.ResponseWriter, r *http.Request) (createData,
 		},
 	}
 
+	// Administrators may create an instance on behalf of another tenant.
+	if checkAdminAccess(r) == nil {
+		if users, err := s.App.DB.ListUsers(); err == nil {
+			data.Owners = users
+		}
+	}
+
 	return data, nil
 }
 
@@ -275,6 +284,25 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Non-admins always own what they create. Administrators may pick another
+	// tenant from the wizard; an unknown or missing id means "me".
+	ownerID, ownerName := user.ID, user.Username
+	if checkAdminAccess(r) == nil {
+		if raw := strings.TrimSpace(r.FormValue("owner_id")); raw != "" {
+			id, perr := strconv.ParseInt(raw, 10, 64)
+			if perr != nil || id <= 0 {
+				s.fail(w, r, "/create", errors.New("the selected owner no longer exists"))
+				return
+			}
+			target, err := s.App.DB.GetUser(id)
+			if err != nil {
+				s.fail(w, r, "/create", errors.New("the selected owner no longer exists"))
+				return
+			}
+			ownerID, ownerName = target.ID, target.Username
+		}
+	}
+
 	req := instances.CreateRequest{
 		Name:         strings.ToLower(strings.TrimSpace(r.FormValue("name"))),
 		ImageID:      r.FormValue("image"),
@@ -284,8 +312,8 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 		Domain:       strings.TrimSpace(r.FormValue("domain")),
 		Notes:        strings.TrimSpace(r.FormValue("notes")),
 		StoragePool:  r.FormValue("storage_pool"),
-		OwnerID:      user.ID,
-		OwnerName:    user.Username,
+		OwnerID:      ownerID,
+		OwnerName:    ownerName,
 	}
 	if req.Kind == "" {
 		req.Kind = instances.KindContainer
@@ -376,7 +404,7 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 	windowDuration, windowLabel := windowDuration(window)
 
 	data := instanceData{
-		baseData:          s.withJobs(s.newBase(w, r, "instances", name)),
+		baseData:          s.withJobs(s.newBase(w, r, "instances", name), r),
 		Inst:              inst,
 		Tab:               tab,
 		Tabs:              instanceTabs(),
@@ -389,6 +417,7 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 		S3Enabled:         s.Backups.S3Configured(),
 		S3Bucket:          s.Backups.S3Bucket(),
 		CaddyEnabled:      s.Domains.CaddyEnabled(),
+		PublicIP:          publicIPFor(s.App, r),
 		SuggestedSnapshot: snapshots.SuggestName(timeNow()),
 		SuggestedBackup:   backups.SuggestName(name, timeNow()),
 	}
@@ -446,6 +475,13 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 
 	if tab == "networking" {
 		data.Networks = s.networkDevices(name)
+	}
+
+	// Ownership is an administrator concern; tenants never see the picker.
+	if checkAdminAccess(r) == nil {
+		if users, err := s.App.DB.ListUsers(); err == nil {
+			data.Owners = users
+		}
 	}
 
 	return data, nil
@@ -714,6 +750,47 @@ func (s *Server) handleInstanceNotes(w http.ResponseWriter, r *http.Request) {
 
 	s.App.Activity.Record(usernameOf(userFrom(r)), "Update notes", name, "", nil)
 	s.succeed(w, r, s.InstanceURL(name)+"?tab=settings", "Notes saved.")
+}
+
+// handleInstanceOwner reassigns an instance to another tenant, or makes it
+// unowned (visible to administrators only). Ownership is an admin concern.
+func (s *Server) handleInstanceOwner(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=settings"
+
+	raw := strings.TrimSpace(r.FormValue("owner_id"))
+	ownerID := int64(0)
+	var owner *models.User
+	err := checkAdminAccess(r)
+	if err == nil {
+		if raw == "" {
+			err = errors.New("choose an owner, or unassigned")
+		} else if id, perr := strconv.ParseInt(raw, 10, 64); perr != nil || id < 0 {
+			err = errors.New("the selected owner no longer exists")
+		} else {
+			ownerID = id
+		}
+	}
+	if err == nil && ownerID > 0 {
+		owner, err = s.App.DB.GetUser(ownerID)
+		if err != nil {
+			err = errors.New("the selected owner no longer exists")
+		}
+	}
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.SetOwner(ctx, name, ownerID)
+	}
+
+	detail := "unassigned"
+	if owner != nil {
+		detail = "to " + owner.Username
+	}
+	s.App.Activity.Record(username, "Change instance owner", name, detail, err)
+
+	s.finish(w, r, fallback, err, "Ownership updated.")
 }
 
 // InstanceURL builds the canonical instance page path.

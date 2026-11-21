@@ -143,11 +143,15 @@ Ordered roughly by value. Each needs its own change and tests.
   a no-op instead of a "shrink" error.
 
 ### Product (reseller readiness)
-- [~] B21. `CONSOLE_MAX_INSTANCES` is enforced (counts instances and queued
+- [x] B21. `CONSOLE_MAX_INSTANCES` is enforced (counts instances and queued
   creates, serialised) and a single request larger than the host is refused.
-  **Not done:** owner-scoped roles, per-user quotas and tenant isolation. That
-  is an authorisation redesign (every instance, backup, domain and job needs an
-  owner), so every console user still sees every instance.
+  Instances, jobs, activity, snapshots, backups and domains are owner-scoped:
+  operators and viewers only see and manage their own instances, while admins
+  see everything. Checks live in the HTTP handlers (an instance or domain the
+  caller does not own answers 404), untracked instances are admin-only, and
+  admins can reassign ownership or create on a tenant's behalf. Each account
+  has an optional per-user instance quota, and a user who still owns instances
+  or has queued/running jobs cannot be deleted.
 - [~] B22. Scheduled snapshots with retention (`CONSOLE_SNAPSHOT_INTERVAL_HOURS`,
   `CONSOLE_SNAPSHOT_KEEP`; off by default; only `auto-*` snapshots are pruned;
   decided from snapshot age, so restarts neither skip nor double a run).

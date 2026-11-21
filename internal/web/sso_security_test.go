@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/peaceful/cloud-console/internal/activity"
 	"github.com/peaceful/cloud-console/internal/auth"
 	"github.com/peaceful/cloud-console/internal/config"
 	"github.com/peaceful/cloud-console/internal/core"
@@ -29,6 +30,7 @@ func newTestServer(t *testing.T) *Server {
 	t.Cleanup(func() { _ = db.Close() })
 
 	app := &core.App{Cfg: &config.Config{}, DB: db, Log: log}
+	app.Activity = activity.New(db, log)
 	return &Server{Deps: Deps{App: app}, log: log}
 }
 

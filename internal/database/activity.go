@@ -4,11 +4,14 @@ import (
 	"github.com/peaceful/cloud-console/internal/models"
 )
 
-// LogActivity appends an audit-log entry.
-func (d *DB) LogActivity(username, action, target, detail, status string) error {
+const activityColumns = `id, ts, username, action, target, detail, status, COALESCE(owner_id, 0)`
+
+// LogActivity appends an audit-log entry. ownerID is the tenant the entry is
+// about; 0 means administrators only.
+func (d *DB) LogActivity(ownerID int64, username, action, target, detail, status string) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO activity (username, action, target, detail, status) VALUES (?, ?, ?, ?, ?)`,
-		username, action, target, detail, status,
+		`INSERT INTO activity (username, action, target, detail, status, owner_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		username, action, target, detail, status, nullableID(ownerID),
 	)
 	return err
 }
@@ -18,25 +21,18 @@ func (d *DB) ListActivity(limit, offset int) ([]models.Activity, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := d.sql.Query(`
-		SELECT id, ts, username, action, target, detail, status
-		FROM activity ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return d.queryActivity(`ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
+}
 
-	var out []models.Activity
-	for rows.Next() {
-		var a models.Activity
-		var ts any
-		if err := rows.Scan(&a.ID, &ts, &a.Username, &a.Action, &a.Target, &a.Detail, &a.Status); err != nil {
-			return nil, err
-		}
-		a.TS = parseTime(ts)
-		out = append(out, a)
+// ListActivityScoped returns the recent activity the scope may see.
+func (d *DB) ListActivityScoped(scope models.Scope, limit, offset int) ([]models.Activity, error) {
+	if scope.All() {
+		return d.ListActivity(limit, offset)
 	}
-	return out, rows.Err()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	return d.queryActivity(`WHERE owner_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`, scope.UserID, limit, offset)
 }
 
 // ListActivityForInstance returns activity entries mentioning an instance.
@@ -44,9 +40,28 @@ func (d *DB) ListActivityForInstance(instanceName string, limit int) ([]models.A
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := d.sql.Query(`
-		SELECT id, ts, username, action, target, detail, status
-		FROM activity WHERE target = ? ORDER BY id DESC LIMIT ?`, instanceName, limit)
+	return d.queryActivity(`WHERE target = ? ORDER BY id DESC LIMIT ?`, instanceName, limit)
+}
+
+// CountActivity returns the total number of activity rows.
+func (d *DB) CountActivity() (int, error) {
+	var n int
+	err := d.sql.QueryRow(`SELECT COUNT(1) FROM activity`).Scan(&n)
+	return n, err
+}
+
+// CountActivityScoped counts the activity rows the scope may see.
+func (d *DB) CountActivityScoped(scope models.Scope) (int, error) {
+	if scope.All() {
+		return d.CountActivity()
+	}
+	var n int
+	err := d.sql.QueryRow(`SELECT COUNT(1) FROM activity WHERE owner_id = ?`, scope.UserID).Scan(&n)
+	return n, err
+}
+
+func (d *DB) queryActivity(clause string, args ...any) ([]models.Activity, error) {
+	rows, err := d.sql.Query(`SELECT `+activityColumns+` FROM activity `+clause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -56,18 +71,11 @@ func (d *DB) ListActivityForInstance(instanceName string, limit int) ([]models.A
 	for rows.Next() {
 		var a models.Activity
 		var ts any
-		if err := rows.Scan(&a.ID, &ts, &a.Username, &a.Action, &a.Target, &a.Detail, &a.Status); err != nil {
+		if err := rows.Scan(&a.ID, &ts, &a.Username, &a.Action, &a.Target, &a.Detail, &a.Status, &a.OwnerID); err != nil {
 			return nil, err
 		}
 		a.TS = parseTime(ts)
 		out = append(out, a)
 	}
 	return out, rows.Err()
-}
-
-// CountActivity returns the total number of activity rows.
-func (d *DB) CountActivity() (int, error) {
-	var n int
-	err := d.sql.QueryRow(`SELECT COUNT(1) FROM activity`).Scan(&n)
-	return n, err
 }

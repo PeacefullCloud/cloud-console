@@ -41,6 +41,12 @@ into the same pattern (`peaceful/cloud-*`).
 from a fresh image, resize CPU/memory/disk, delete, view the private IP and
 status.
 
+**Web terminal** — every instance has a Console button that opens an
+interactive terminal in its own browser window, like a cloud provider's serial
+console. It signs in automatically as `cloud-user` (passwordless sudo via
+`sudo -i`), works for both VMs and containers, and needs no SSH port, password
+or private key in the browser.
+
 **Domains** — attach hostnames to instances. The console rewrites the host
 Caddyfile and reloads Caddy, which issues and renews HTTPS certificates
 automatically. Create the A record; everything else is automatic.
@@ -172,7 +178,7 @@ it also works as a systemd `EnvironmentFile=`.
 | `CONSOLE_SECURE_COOKIES` | `true` for an `https://` base URL, else `false` | Secure flag on cookies |
 | `CONSOLE_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Proxies whose `X-Forwarded-For` is trusted (IPs or CIDRs, or `none`). Add Caddy's network if it runs in a container |
 | `CONSOLE_SESSION_TTL_HOURS` | `168` | Session lifetime |
-| `CONSOLE_MAX_INSTANCES` | `100` | Most instances the console will create (0 = no limit) |
+| `CONSOLE_MAX_INSTANCES` | `100` | Most instances the whole console will create (0 = no limit). Per-user quotas are set under Settings |
 | `CONSOLE_ADMIN_USER` | `admin` | Bootstrap administrator username |
 | `CONSOLE_ADMIN_PASSWORD` | *(random)* | Bootstrap password. When unset, a random one is written to `<data>/initial-admin-password` (mode 0600), and shown on the terminal if there is one. It is never logged |
 | `CONSOLE_DEV` | `false` | Load templates/static from disk for live editing |
@@ -183,6 +189,20 @@ it also works as a systemd `EnvironmentFile=`.
 | --- | --- | --- |
 | `INCUS_SOCKET` | `/var/lib/incus/unix.socket` | Path to the Incus Unix socket |
 | `INCUS_PROJECT` | *(default project)* | Incus project to operate in |
+
+### Web terminal
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CONSOLE_TERMINAL_ENABLED` | `true` | Turns the Console button and socket on/off |
+| `CONSOLE_TERMINAL_LOGIN_USER` | `cloud-user` | Default account created on new instances and used by the terminal (lowercase letters, digits, `_`, `-`; not `root`) |
+| `CONSOLE_TERMINAL_MAX_SESSIONS` | `20` | Host-wide concurrent terminal sessions (0 = unlimited) |
+| `CONSOLE_TERMINAL_MAX_PER_USER` | `3` | Per-tenant cap, clamped to the global cap |
+| `CONSOLE_TERMINAL_IDLE_TIMEOUT_SECONDS` | `900` | Disconnect after this long with no input (0 disables; not recommended) |
+| `CONSOLE_TERMINAL_MAX_SESSION_SECONDS` | `0` | Hard session lifetime (0 = no limit) |
+| `CONSOLE_TERMINAL_MAX_INPUT_BYTES` | `262144` | Largest accepted browser → guest input frame |
+| `CONSOLE_TERMINAL_ALLOWED_HOSTS` | *(unset)* | Comma-separated public hostnames allowed to reach the socket; blocks DNS rebinding. Include the port if it is non-standard |
+| `CONSOLE_TERMINAL_ALLOWED_ORIGINS` | *(unset)* | Extra origins permitted on the websocket handshake |
 
 ### Caddy
 
@@ -436,10 +456,40 @@ Browser ──HTTPS──► Caddy ──► Go Console ──Unix socket──�
   generated `secret.key` in the data directory). Back the key up with the data.
 - `X-Forwarded-For` is trusted only from `CONSOLE_TRUSTED_PROXIES`.
 - Roles: `admin` (everything, plus the host, user, SSO, storage and routing
-  settings), `operator` (manage instances), `viewer` (read only).
+  settings), `operator` (manage the instances they own), `viewer` (read only,
+  for the instances they own). Administrators see every instance; nobody else
+  can see or act on an instance they do not own. Instances created outside the
+  console stay admin-only until an administrator assigns them.
+- Each account can have an instance quota under Settings (`0` means unlimited);
+  `CONSOLE_MAX_INSTANCES` still caps the whole host.
 - Every mutating action is written to the audit log with the user and result.
 - Set `CONSOLE_SECURE_COOKIES=true` and put the console behind Caddy or another TLS
   terminator before exposing it.
+
+#### Web terminal isolation
+
+An interactive shell is effectively unrestricted command execution, so the
+terminal is gated at every step:
+
+- The page **and** the websocket both go through the same `requireInstance`
+  ownership check as the other instance routes. A tenant gets a 404 for
+  somebody else's instance name and cannot probe names through either URL.
+- A live session needs a valid console session cookie. Viewers (read-only role)
+  cannot open it; a shell could change anything.
+- The socket requires a same-origin `Origin` header and, when configured, an
+  allowed `Host`, which prevents cross-site websocket hijacking and DNS
+  rebinding. `CONSOLE_TERMINAL_ALLOWED_HOSTS` should be set on a public install.
+- No SSH service, key or password is exposed to the browser. The console uses
+  its existing Unix-socket access to Incus and attaches to an interactive exec
+  inside the instance, then starts a login shell for `cloud-user` as root.
+- Sessions are capped globally and per tenant, time out when idle, and have a
+  maximum lifetime. Closing the window, signing out, or stopping the console
+  tears down the guest process. Every open/close is audit logged.
+- New instances get `cloud-user` with a locked password, the owner's SSH key in
+  its `authorized_keys`, and a `visudo`-validated passwordless sudo rule. Use
+  `sudo -i` for a root shell. Plain `su -` uses the root password chosen at
+  creation. Instances created before this feature have no such account, so the
+  terminal presents a normal `login:` prompt instead of an error.
 
 ---
 
@@ -479,7 +529,7 @@ Implemented:
 - Snapshots: create, list, restore, delete
 - Backups: create, list, restore, delete, export to S3-compatible storage
 - Monitoring: CPU, memory, disk and network history with charts
-- Access: console and diagnostic command snippets
+- Access: web terminal into VMs and containers, plus console and diagnostic command snippets
 - Settings: host capacity, storage pools, console users, S3 status and the
   generated Caddyfile preview (admins only); your own password, two-factor and
   linked sign-in (everyone)
@@ -487,7 +537,7 @@ Implemented:
 
 Deliberately not in V1 (add when actually needed):
 
-- A web console/VNC stream into instances (use `incus exec` / `incus console`)
+- VNC/graphics console streaming (the web terminal covers text shells; use a VNC sidecar for a desktop)
 - Scheduled snapshots and backups (use `incus snapshot schedule` for now)
 - Clustering and multi-host support
 - A REST API for third parties

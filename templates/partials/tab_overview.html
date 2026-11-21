@@ -59,6 +59,15 @@
       <div class="card-head">
         <div class="grow"><div class="card-title">Access</div></div>
       </div>
+      {{if canWrite .User}}
+      <div class="field">
+        <label>Web console</label>
+        <a class="btn btn-outline btn-sm" href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}">
+          Open terminal — signs in as {{.TerminalUser}}
+        </a>
+        <p class="hint">Opens in a separate window. The default user has passwordless sudo (<code>sudo -i</code>).</p>
+      </div>
+      {{end}}
       <div class="field">
         <label>Console</label>
         <div class="copy-field">
@@ -76,6 +85,16 @@
         <p class="hint">Containers live on the private Incus bridge. Public traffic arrives through the host Caddy.</p>
       </div>
       {{end}}
+      {{if .PublicIP}}
+      <div class="field">
+        <label>Public IP (DNS target)</label>
+        <div class="copy-field">
+          <input type="text" readonly value="{{.PublicIP}}">
+          <button class="btn btn-sm" type="button" data-copy="{{.PublicIP}}">Copy</button>
+        </div>
+        <p class="hint">Point A records at this shared address. Never use the private container IP in DNS.</p>
+      </div>
+      {{end}}
     </div>
   </div>
 
@@ -88,6 +107,7 @@
         <dt>Status</dt><dd><span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span></dd>
         <dt>Image</dt><dd>{{$inst.ImageLabel}}</dd>
         <dt>Private IPv4</dt><dd class="mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</dd>
+        {{if .PublicIP}}<dt>Public IP (DNS)</dt><dd class="mono">{{.PublicIP}}</dd>{{end}}
         <dt>Storage pool</dt><dd>{{if $inst.StoragePool}}{{$inst.StoragePool}}{{else}}—{{end}}</dd>
         <dt>Domains</dt><dd>{{len $inst.Domains}}</dd>
         {{if $inst.Notes}}<dt>Notes</dt><dd>{{$inst.Notes}}</dd>{{end}}

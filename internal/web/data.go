@@ -27,6 +27,9 @@ type baseData struct {
 	IncusSocket   string
 	InstanceCount int
 	Jobs          []models.Job
+	// TerminalUser is the account the web console logs into; shown in the UI
+	// so the default login is never a surprise.
+	TerminalUser string
 
 	Error     string
 	Notice    string
@@ -70,6 +73,10 @@ type createData struct {
 	Pools        []poolInfo
 	DefaultImage string
 	Form         createForm
+
+	// Owners lists the tenants an administrator may create for. It is empty
+	// for everyone else.
+	Owners []models.User
 }
 
 type platformInfo struct {
@@ -137,6 +144,10 @@ type instanceData struct {
 	Images    []incus.Image
 	Sizes     []Size
 
+	// Owners lists the accounts an administrator may reassign the instance
+	// to. It is empty for everyone else.
+	Owners []models.User
+
 	// ConsoleLog holds the tail of the instance's console output.
 	ConsoleLog    []string
 	ConsoleLogErr string
@@ -144,6 +155,7 @@ type instanceData struct {
 	S3Enabled    bool
 	S3Bucket     string
 	CaddyEnabled bool
+	PublicIP     string
 
 	SuggestedSnapshot string
 	SuggestedBackup   string
@@ -289,6 +301,9 @@ type settingsData struct {
 	Users   []models.User
 	Preview string
 
+	// Usage maps a user id to the number of instances that user owns.
+	Usage map[int64]int
+
 	S3Configured      bool
 	S3Bucket          string
 	S3Endpoint        string
@@ -353,6 +368,7 @@ type usersFragmentData struct {
 	CSRF   string
 	User   *models.User
 	Users  []models.User
+	Usage  map[int64]int
 	Links  map[int64][]string
 	Error  string
 	Notice string

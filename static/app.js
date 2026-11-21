@@ -12,6 +12,27 @@
     }
   });
 
+  // Web consoles open in their own window, like a cloud provider's instance
+  // console. A stable name reuses that window on subsequent clicks.
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest("a[data-console]");
+    if (!link) {
+      return;
+    }
+    event.preventDefault();
+    var url = link.getAttribute("href");
+    var name = link.getAttribute("data-console") || "instance";
+    var win = window.open(url, "pcc-console-" + name,
+      "popup=yes,width=1100,height=720,resizable=yes");
+    if (win) {
+      try { win.opener = null; } catch (e) { /* cross-origin, harmless */ }
+    } else {
+      // Pop-up blockers reject window.open with features; a plain tab is a
+      // better fallback than silently doing nothing.
+      window.open(url, "_blank");
+    }
+  });
+
   document.addEventListener("htmx:afterRequest", function (event) {
     var form = event.target;
     if (form && form.matches && form.matches("form[data-reset-after-request]")) {

@@ -143,7 +143,7 @@ func (s *Service) EnqueueCreate(username string, req CreateRequest) (*models.Job
 	if _, err := s.app.Incus.Instance(req.Name); err == nil {
 		return nil, ErrNameInUse
 	}
-	if err := s.checkQuota(context.Background()); err != nil {
+	if err := s.checkQuota(context.Background(), req.OwnerID); err != nil {
 		return nil, err
 	}
 	if res, err := s.app.Incus.ServerResources(); err == nil && res != nil {
@@ -157,7 +157,7 @@ func (s *Service) EnqueueCreate(username string, req CreateRequest) (*models.Job
 		return nil, err
 	}
 
-	return s.app.Jobs.Enqueue(username, JobCreate, req.Name, string(payload))
+	return s.app.Jobs.Enqueue(req.OwnerID, username, JobCreate, req.Name, string(payload))
 }
 
 // handleCreate runs the create job: build, start, provision SSH, record,
@@ -251,6 +251,14 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		sshDone <- s.EnsureSSH(ctx, req.Name, image, req.RootPassword, req.SSHKey)
 	}()
 
+	// The web terminal's default user is independent of root SSH, so create
+	// it alongside SSH rather than adding another serial first-boot wait.
+	// sudo is installed by EnsureSSH; the sudoers drop-in is valid either way.
+	consoleDone := make(chan error, 1)
+	go func() {
+		consoleDone <- s.EnsureConsoleUser(ctx, req.Name, req.SSHKey, s.app.Cfg.TerminalLoginUser)
+	}()
+
 	// 7. Wait until it has a network address.
 	s.app.Jobs.Progress(job.ID, 70, "Waiting for the network to come up")
 	ip, err := s.WaitForIP(ctx, req.Name, 90*time.Second)
@@ -284,6 +292,15 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		}
 	}
 
+	// 9b. Give every new instance an instant HTTPS URL on the platform domain
+	// when one is configured, so users need no DNS setup to reach it.
+	if base := strings.TrimSpace(s.app.Cfg.PlatformDomain); base != "" {
+		host := req.Name + "." + strings.TrimPrefix(base, "*.")
+		if _, err := s.app.DB.CreateDomain(req.Name, host, 80); err != nil {
+			s.app.Log.Warn("could not attach platform domain", "instance", req.Name, "domain", host, "err", err)
+		}
+	}
+
 	// 10. Re-render Caddy so the domain reaches the new container.
 	s.app.Jobs.Progress(job.ID, 95, "Applying web routing")
 	s.notifyChanged(ctx, req.Name)
@@ -292,11 +309,16 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 	// instance runs and stays manageable with incus exec, but the user is
 	// told. Name the wait honestly: routing is done, SSH is what is left.
 	s.app.Jobs.Progress(job.ID, 95, "Waiting for SSH access to finish")
-	if err := <-sshDone; err != nil {
-		s.app.Log.Warn("ssh setup incomplete", "instance", req.Name, "err", err)
-		s.app.Jobs.Progress(job.ID, 96, "SSH setup incomplete: "+err.Error())
+	sshErr, consoleErr := <-sshDone, <-consoleDone
+	if sshErr != nil {
+		s.app.Log.Warn("ssh setup incomplete", "instance", req.Name, "err", sshErr)
+		s.app.Jobs.Progress(job.ID, 96, "SSH setup incomplete: "+sshErr.Error())
 	} else {
 		s.app.Jobs.Progress(job.ID, 96, "SSH access ready for root")
+	}
+	if consoleErr != nil {
+		s.app.Log.Warn("console user setup incomplete", "instance", req.Name, "err", consoleErr)
+		s.app.Jobs.Progress(job.ID, 96, "Web console user setup incomplete: "+consoleErr.Error())
 	}
 
 	if ip != "" {
@@ -344,7 +366,7 @@ func (s *Service) EnqueueRebuild(username, name, imageID string) (*models.Job, e
 		return nil, err
 	}
 
-	return s.app.Jobs.Enqueue(username, JobRebuild, name, string(payload))
+	return s.app.Jobs.Enqueue(s.ownerID(name), username, JobRebuild, name, string(payload))
 }
 
 func (s *Service) handleRebuild(ctx context.Context, job *models.Job) error {
@@ -688,9 +710,19 @@ func (s *Service) hasActiveJob(name string) bool {
 	return false
 }
 
-// checkQuota refuses a new instance once CONSOLE_MAX_INSTANCES is reached.
-// Instances still being created count, or a burst of requests would slip past.
-func (s *Service) checkQuota(ctx context.Context) error {
+// checkQuota enforces the host-wide instance limit and the owner's personal
+// quota. Instances still being created count, or a burst of requests would slip
+// past either limit.
+func (s *Service) checkQuota(ctx context.Context, ownerID int64) error {
+	if err := s.checkGlobalQuota(ctx); err != nil {
+		return err
+	}
+	return s.checkOwnerQuota(ownerID)
+}
+
+// checkGlobalQuota refuses a new instance once CONSOLE_MAX_INSTANCES is
+// reached. A limit of 0 means unlimited.
+func (s *Service) checkGlobalQuota(ctx context.Context) error {
 	limit := s.app.Cfg.MaxInstances
 	if limit <= 0 {
 		return nil
@@ -716,6 +748,31 @@ func (s *Service) checkQuota(ctx context.Context) error {
 
 	if len(names) >= limit {
 		return fmt.Errorf("%w: this console is limited to %d instances", ErrQuota, limit)
+	}
+	return nil
+}
+
+// checkOwnerQuota refuses a new instance once the owner's per-user limit is
+// reached. A limit of 0 means unlimited.
+func (s *Service) checkOwnerQuota(ownerID int64) error {
+	if ownerID <= 0 {
+		return nil
+	}
+
+	user, err := s.app.DB.GetUser(ownerID)
+	if err != nil {
+		return fmt.Errorf("could not read the instance owner: %w", err)
+	}
+	if user.MaxInstances <= 0 {
+		return nil
+	}
+
+	used, err := s.app.DB.CountInstanceSlotsByOwner(ownerID, JobCreate)
+	if err != nil {
+		return fmt.Errorf("could not count the owner's instances: %w", err)
+	}
+	if used >= user.MaxInstances {
+		return fmt.Errorf("%w: this account is limited to %d instances", ErrQuota, user.MaxInstances)
 	}
 	return nil
 }

@@ -37,19 +37,19 @@ func (d *DB) CreateUser(username, passwordHash, role string) (*models.User, erro
 // GetUser loads a user by id.
 func (d *DB) GetUser(id int64) (*models.User, error) {
 	return d.scanUser(d.sql.QueryRow(
-		`SELECT id, username, password_hash, role, auth_method, created_at, last_login_at, totp_secret, totp_enabled FROM users WHERE id = ?`, id))
+		`SELECT id, username, password_hash, role, auth_method, max_instances, created_at, last_login_at, totp_secret, totp_enabled FROM users WHERE id = ?`, id))
 }
 
 // GetUserByUsername loads a user by username.
 func (d *DB) GetUserByUsername(username string) (*models.User, error) {
 	return d.scanUser(d.sql.QueryRow(
-		`SELECT id, username, password_hash, role, auth_method, created_at, last_login_at, totp_secret, totp_enabled FROM users WHERE username = ?`, username))
+		`SELECT id, username, password_hash, role, auth_method, max_instances, created_at, last_login_at, totp_secret, totp_enabled FROM users WHERE username = ?`, username))
 }
 
 // ListUsers returns all users, newest first.
 func (d *DB) ListUsers() ([]models.User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, username, password_hash, role, auth_method, created_at, last_login_at, totp_secret, totp_enabled FROM users ORDER BY username`)
+		`SELECT id, username, password_hash, role, auth_method, max_instances, created_at, last_login_at, totp_secret, totp_enabled FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (d *DB) ListUsers() ([]models.User, error) {
 		var last any
 		var secret sql.NullString
 		var enabled sql.NullInt64
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.AuthMethod, &created, &last, &secret, &enabled); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.AuthMethod, &u.MaxInstances, &created, &last, &secret, &enabled); err != nil {
 			return nil, err
 		}
 		u.CreatedAt = parseTime(created)
@@ -82,7 +82,7 @@ func (d *DB) scanUser(row *sql.Row) (*models.User, error) {
 	var last any
 	var secret sql.NullString
 	var enabled sql.NullInt64
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.AuthMethod, &created, &last, &secret, &enabled)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.AuthMethod, &u.MaxInstances, &created, &last, &secret, &enabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -96,6 +96,21 @@ func (d *DB) scanUser(row *sql.Row) (*models.User, error) {
 	}
 	u.TOTPEnabled = enabled.Int64 == 1
 	return &u, nil
+}
+
+// SetUserQuota changes a user's per-tenant instance limit. 0 means unlimited.
+func (d *DB) SetUserQuota(id int64, maxInstances int) error {
+	if maxInstances < 0 {
+		maxInstances = 0
+	}
+	res, err := d.sql.Exec(`UPDATE users SET max_instances = ? WHERE id = ?`, maxInstances, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // TouchLastLogin records a successful sign-in.

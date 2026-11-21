@@ -10,8 +10,11 @@ import (
 // attributes and htmx injects an indicator stylesheet. form-action is left
 // out on purpose: Chromium applies it to the redirect that follows a form
 // post, which would block the hand-off to a single sign-on provider.
+// 'wasm-unsafe-eval' is required by Chromium to compile WebAssembly when a
+// strict script-src is present. It does not permit eval()/new Function(), so
+// it is a narrow allowance for the wterm terminal emulator only.
 const contentSecurityPolicy = "default-src 'self'; " +
-	"script-src 'self'; " +
+	"script-src 'self' 'wasm-unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"font-src 'self' data:; " +

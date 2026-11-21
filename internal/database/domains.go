@@ -23,6 +23,19 @@ func (d *DB) CreateDomain(instanceName, domain string, port int) (*models.Domain
 	return d.GetDomain(id)
 }
 
+// GetDomainByName loads the domain row for a hostname, if any.
+func (d *DB) GetDomainByName(domain string) (*models.Domain, error) {
+	row := d.sql.QueryRow(`SELECT id, instance_name, domain, port, created_at FROM domains WHERE domain = ?`, domain)
+	dom, err := scanDomainRows(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return dom, nil
+}
+
 // GetDomain loads one domain row.
 func (d *DB) GetDomain(id int64) (*models.Domain, error) {
 	row := d.sql.QueryRow(`SELECT id, instance_name, domain, port, created_at FROM domains WHERE id = ?`, id)
@@ -32,6 +45,20 @@ func (d *DB) GetDomain(id int64) (*models.Domain, error) {
 // ListDomains returns every configured domain.
 func (d *DB) ListDomains() ([]models.Domain, error) {
 	return d.queryDomains(`SELECT id, instance_name, domain, port, created_at FROM domains ORDER BY domain`)
+}
+
+// ListDomainsScoped returns the domains attached to instances the scope may
+// see. Domains on instances with no console record are admin-only.
+func (d *DB) ListDomainsScoped(scope models.Scope) ([]models.Domain, error) {
+	if scope.All() {
+		return d.ListDomains()
+	}
+	return d.queryDomains(`
+		SELECT d.id, d.instance_name, d.domain, d.port, d.created_at
+		FROM domains d
+		JOIN instances i ON i.name = d.instance_name
+		WHERE i.owner_id = ?
+		ORDER BY d.domain`, scope.UserID)
 }
 
 // ListDomainsForInstance returns the domains attached to one instance.
@@ -69,6 +96,19 @@ func (d *DB) DeleteDomainsForInstance(name string) error {
 func (d *DB) CountDomains() (int, error) {
 	var n int
 	err := d.sql.QueryRow(`SELECT COUNT(1) FROM domains`).Scan(&n)
+	return n, err
+}
+
+// CountDomainsScoped counts the domains the scope may see.
+func (d *DB) CountDomainsScoped(scope models.Scope) (int, error) {
+	if scope.All() {
+		return d.CountDomains()
+	}
+	var n int
+	err := d.sql.QueryRow(`
+		SELECT COUNT(1) FROM domains d
+		JOIN instances i ON i.name = d.instance_name
+		WHERE i.owner_id = ?`, scope.UserID).Scan(&n)
 	return n, err
 }
 

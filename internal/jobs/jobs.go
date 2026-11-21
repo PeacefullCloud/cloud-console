@@ -151,8 +151,9 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-// Enqueue records a new job and schedules it.
-func (m *Manager) Enqueue(username, kind, target, payload string) (*models.Job, error) {
+// Enqueue records a new job and schedules it. ownerID is the tenant the job
+// belongs to; 0 makes it visible to administrators only.
+func (m *Manager) Enqueue(ownerID int64, username, kind, target, payload string) (*models.Job, error) {
 	if _, ok := m.handler(kind); !ok {
 		return nil, errors.New("no handler registered for job kind " + kind)
 	}
@@ -171,6 +172,7 @@ func (m *Manager) Enqueue(username, kind, target, payload string) (*models.Job, 
 		Progress:  0,
 		Message:   "Queued",
 		CreatedBy: username,
+		OwnerID:   ownerID,
 		CreatedAt: time.Now(),
 	}
 

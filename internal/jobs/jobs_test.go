@@ -51,11 +51,30 @@ func TestJobRunsToCompletion(t *testing.T) {
 	m.Register("ok", func(ctx context.Context, j *models.Job) error { return nil })
 	start(t, m)
 
-	job, err := m.Enqueue("alice", "ok", "web", "{}")
+	job, err := m.Enqueue(0, "alice", "ok", "web", "{}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, job.ID, "done")
+}
+
+func TestEnqueueRecordsOwner(t *testing.T) {
+	m, db := newManager(t, 1)
+	m.Register("ok", func(ctx context.Context, j *models.Job) error { return nil })
+	start(t, m)
+
+	owner, err := db.CreateUser("alice", "x", "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := m.Enqueue(owner.ID, "alice", "ok", "web", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitStatus(t, db, job.ID, "done")
+	if done.OwnerID != owner.ID {
+		t.Errorf("job owner = %d, want %d", done.OwnerID, owner.ID)
+	}
 }
 
 func TestPanickingJobFailsWithoutKillingTheManager(t *testing.T) {
@@ -64,13 +83,13 @@ func TestPanickingJobFailsWithoutKillingTheManager(t *testing.T) {
 	m.Register("ok", func(ctx context.Context, j *models.Job) error { return nil })
 	start(t, m)
 
-	bad, _ := m.Enqueue("a", "boom", "web", "{}")
+	bad, _ := m.Enqueue(0, "a", "boom", "web", "{}")
 	failed := waitStatus(t, db, bad.ID, "failed")
 	if failed.Error == "" {
 		t.Error("the failure carries no explanation")
 	}
 
-	good, _ := m.Enqueue("a", "ok", "web", "{}")
+	good, _ := m.Enqueue(0, "a", "ok", "web", "{}")
 	waitStatus(t, db, good.ID, "done")
 }
 
@@ -93,7 +112,7 @@ func TestJobsForOneTargetNeverOverlap(t *testing.T) {
 
 	var ids []string
 	for i := 0; i < 4; i++ {
-		j, err := m.Enqueue("a", "work", "same-instance", "{}")
+		j, err := m.Enqueue(0, "a", "work", "same-instance", "{}")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,8 +143,8 @@ func TestJobsForDifferentTargetsRunTogether(t *testing.T) {
 	})
 	start(t, m)
 
-	a, _ := m.Enqueue("a", "work", "one", "{}")
-	b, _ := m.Enqueue("a", "work", "two", "{}")
+	a, _ := m.Enqueue(0, "a", "work", "one", "{}")
+	b, _ := m.Enqueue(0, "a", "work", "two", "{}")
 	waitStatus(t, db, a.ID, "done")
 	waitStatus(t, db, b.ID, "done")
 }
@@ -167,7 +186,7 @@ func TestEnqueueAfterStopDoesNotPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Stop()
-	if _, err := m.Enqueue("a", "ok", "web", "{}"); err == nil {
+	if _, err := m.Enqueue(0, "a", "ok", "web", "{}"); err == nil {
 		t.Error("enqueue after Stop succeeded")
 	}
 	m.Stop() // idempotent
@@ -175,7 +194,7 @@ func TestEnqueueAfterStopDoesNotPanic(t *testing.T) {
 
 func TestEnqueueUnknownKind(t *testing.T) {
 	m, _ := newManager(t, 1)
-	if _, err := m.Enqueue("a", "nope", "web", "{}"); err == nil {
+	if _, err := m.Enqueue(0, "a", "nope", "web", "{}"); err == nil {
 		t.Error("unknown kind accepted")
 	}
 }

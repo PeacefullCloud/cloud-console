@@ -109,7 +109,7 @@ func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackups(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Backups.All(r.Context())
+	list, err := s.Backups.All(r.Context(), scopeFrom(r))
 	if err != nil {
 		s.renderError(w, r, "Backups", "backups", err)
 		return

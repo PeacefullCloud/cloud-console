@@ -212,6 +212,19 @@
         <input id="notes" name="notes" type="text" placeholder="Customer site, staging, ..." value="{{.Form.Notes}}">
       </div>
 
+      {{if canAdmin .User}}
+      <div class="field mt-16">
+        <label for="owner_id">Create on behalf of</label>
+        <select id="owner_id" name="owner_id">
+          <option value="">Me ({{.User.Username}})</option>
+          {{range .Owners}}
+          {{if ne .ID $.User.ID}}<option value="{{.ID}}">{{.Username}} ({{.Role}})</option>{{end}}
+          {{end}}
+        </select>
+        <p class="hint">The instance and its history belong to the selected account. Leave as-is to own it yourself.</p>
+      </div>
+      {{end}}
+
       <div class="label" style="margin-top:20px">SSH access</div>
       <p class="card-sub" style="margin-bottom:12px">At least one is required. SSH is set up automatically — connect as <span class="mono">root@&lt;private-ip&gt;</span>.</p>
       <div class="field-row">

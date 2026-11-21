@@ -55,6 +55,20 @@ func (d *DB) ListAllBackups() ([]models.Backup, error) {
 		FROM backups ORDER BY created_at DESC`)
 }
 
+// ListAllBackupsScoped returns the backup records the scope may see.
+func (d *DB) ListAllBackupsScoped(scope models.Scope) ([]models.Backup, error) {
+	if scope.All() {
+		return d.ListAllBackups()
+	}
+	return d.queryBackups(`
+		SELECT b.id, b.instance_name, b.name, b.target, b.s3_key, b.size_bytes, b.status, b.error,
+		       b.created_by, b.created_at
+		FROM backups b
+		JOIN instances i ON i.name = b.instance_name
+		WHERE i.owner_id = ?
+		ORDER BY b.created_at DESC`, scope.UserID)
+}
+
 // DeleteBackup removes a backup record.
 func (d *DB) DeleteBackup(instanceName, name string) error {
 	_, err := d.sql.Exec(`DELETE FROM backups WHERE instance_name = ? AND name = ?`, instanceName, name)
@@ -78,6 +92,22 @@ func (d *DB) BackupTotals() (int, int64, error) {
 	var count int
 	var size sql.NullInt64
 	err := d.sql.QueryRow(`SELECT COUNT(1), SUM(size_bytes) FROM backups WHERE status = 'complete'`).Scan(&count, &size)
+	return count, size.Int64, err
+}
+
+// BackupTotalsScoped returns completed backup counts and sizes the scope may
+// see.
+func (d *DB) BackupTotalsScoped(scope models.Scope) (int, int64, error) {
+	if scope.All() {
+		return d.BackupTotals()
+	}
+	var count int
+	var size sql.NullInt64
+	err := d.sql.QueryRow(`
+		SELECT COUNT(1), SUM(b.size_bytes)
+		FROM backups b
+		JOIN instances i ON i.name = b.instance_name
+		WHERE b.status = 'complete' AND i.owner_id = ?`, scope.UserID).Scan(&count, &size)
 	return count, size.Int64, err
 }
 

@@ -17,7 +17,7 @@
     {{if .Networks}}
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Network</th><th>Type</th><th>Managed</th><th>Address</th><th class="num">Instances</th></tr></thead>
+        <thead><tr><th>Network</th><th>Type</th><th>Managed</th><th>Address</th>{{if canAdmin $.User}}<th class="num">Instances</th>{{end}}</tr></thead>
         <tbody>
           {{range .Networks}}
           <tr>
@@ -25,7 +25,7 @@
             <td class="muted">{{.Type}}</td>
             <td class="muted">{{.Managed}}</td>
             <td class="mono">{{if .Address}}{{.Address}}{{else}}—{{end}}</td>
-            <td class="num">{{.UsedBy}}</td>
+            {{if canAdmin $.User}}<td class="num">{{.UsedBy}}</td>{{end}}
           </tr>
           {{end}}
         </tbody>

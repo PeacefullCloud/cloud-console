@@ -61,10 +61,27 @@ func (d *DB) ListSnapshotMetaForInstance(instanceName string) (map[string]models
 	return out, rows.Err()
 }
 
-// ListAllSnapshotMeta returns every snapshot record grouped by instance.
+// ListAllSnapshotMeta returns every snapshot record.
 func (d *DB) ListAllSnapshotMeta() ([]models.SnapshotMeta, error) {
-	rows, err := d.sql.Query(
+	return d.querySnapshotMeta(
 		`SELECT id, instance_name, name, note, created_by, created_at FROM snapshots ORDER BY created_at DESC`)
+}
+
+// ListAllSnapshotMetaScoped returns the snapshot records the scope may see.
+func (d *DB) ListAllSnapshotMetaScoped(scope models.Scope) ([]models.SnapshotMeta, error) {
+	if scope.All() {
+		return d.ListAllSnapshotMeta()
+	}
+	return d.querySnapshotMeta(`
+		SELECT s.id, s.instance_name, s.name, s.note, s.created_by, s.created_at
+		FROM snapshots s
+		JOIN instances i ON i.name = s.instance_name
+		WHERE i.owner_id = ?
+		ORDER BY s.created_at DESC`, scope.UserID)
+}
+
+func (d *DB) querySnapshotMeta(query string, args ...any) ([]models.SnapshotMeta, error) {
+	rows, err := d.sql.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -105,5 +122,18 @@ func (d *DB) RenameSnapshots(oldName, newName string) error {
 func (d *DB) CountSnapshots() (int, error) {
 	var n int
 	err := d.sql.QueryRow(`SELECT COUNT(1) FROM snapshots`).Scan(&n)
+	return n, err
+}
+
+// CountSnapshotsScoped counts the tracked snapshots the scope may see.
+func (d *DB) CountSnapshotsScoped(scope models.Scope) (int, error) {
+	if scope.All() {
+		return d.CountSnapshots()
+	}
+	var n int
+	err := d.sql.QueryRow(`
+		SELECT COUNT(1) FROM snapshots s
+		JOIN instances i ON i.name = s.instance_name
+		WHERE i.owner_id = ?`, scope.UserID).Scan(&n)
 	return n, err
 }

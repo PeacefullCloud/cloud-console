@@ -10,9 +10,9 @@ import (
 // CreateJob inserts a queued job.
 func (d *DB) CreateJob(j *models.Job) error {
 	_, err := d.sql.Exec(`
-		INSERT INTO jobs (id, kind, target, payload, status, progress, message, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		j.ID, j.Kind, j.Target, j.Payload, j.Status, j.Progress, j.Message, j.CreatedBy)
+		INSERT INTO jobs (id, kind, target, payload, status, progress, message, created_by, owner_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		j.ID, j.Kind, j.Target, j.Payload, j.Status, j.Progress, j.Message, j.CreatedBy, nullableID(j.OwnerID))
 	return err
 }
 
@@ -65,7 +65,8 @@ func (d *DB) FinishJob(id, status, message, errMsg string) error {
 // GetJob loads a single job.
 func (d *DB) GetJob(id string) (*models.Job, error) {
 	row := d.sql.QueryRow(`
-		SELECT id, kind, target, status, progress, message, error, created_by, created_at, started_at, ended_at
+		SELECT id, kind, target, status, progress, message, error, created_by, COALESCE(owner_id, 0),
+		       created_at, started_at, ended_at
 		FROM jobs WHERE id = ?`, id)
 	return scanJob(row)
 }
@@ -75,30 +76,46 @@ func (d *DB) ListJobs(limit int) ([]models.Job, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25
 	}
-	rows, err := d.sql.Query(`
-		SELECT id, kind, target, status, progress, message, error, created_by, created_at, started_at, ended_at
-		FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return d.queryJobs(`ORDER BY created_at DESC LIMIT ?`, limit)
+}
 
-	var out []models.Job
-	for rows.Next() {
-		j, err := scanJobRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *j)
+// ListJobsScoped returns the most recent jobs the scope may see.
+func (d *DB) ListJobsScoped(scope models.Scope, limit int) ([]models.Job, error) {
+	if scope.All() {
+		return d.ListJobs(limit)
 	}
-	return out, rows.Err()
+	if limit <= 0 || limit > 200 {
+		limit = 25
+	}
+	return d.queryJobs(`WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?`, scope.UserID, limit)
 }
 
 // ListActiveJobs returns jobs that are queued or running.
 func (d *DB) ListActiveJobs() ([]models.Job, error) {
+	return d.queryJobs(`WHERE status IN ('queued', 'running') ORDER BY created_at`)
+}
+
+// ListActiveJobsScoped returns queued or running jobs the scope may see.
+func (d *DB) ListActiveJobsScoped(scope models.Scope) ([]models.Job, error) {
+	if scope.All() {
+		return d.ListActiveJobs()
+	}
+	return d.queryJobs(`WHERE owner_id = ? AND status IN ('queued', 'running') ORDER BY created_at`, scope.UserID)
+}
+
+// CountActiveJobsByOwner counts a user's queued or running jobs.
+func (d *DB) CountActiveJobsByOwner(ownerID int64) (int, error) {
+	var n int
+	err := d.sql.QueryRow(
+		`SELECT COUNT(1) FROM jobs WHERE owner_id = ? AND status IN ('queued', 'running')`, ownerID).Scan(&n)
+	return n, err
+}
+
+func (d *DB) queryJobs(clause string, args ...any) ([]models.Job, error) {
 	rows, err := d.sql.Query(`
-		SELECT id, kind, target, status, progress, message, error, created_by, created_at, started_at, ended_at
-		FROM jobs WHERE status IN ('queued', 'running') ORDER BY created_at`)
+		SELECT id, kind, target, status, progress, message, error, created_by, COALESCE(owner_id, 0),
+		       created_at, started_at, ended_at
+		FROM jobs `+clause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +169,7 @@ func scanJobRows(row rowScanner) (*models.Job, error) {
 	var j models.Job
 	var created, started, ended any
 	if err := row.Scan(&j.ID, &j.Kind, &j.Target, &j.Status, &j.Progress, &j.Message, &j.Error,
-		&j.CreatedBy, &created, &started, &ended); err != nil {
+		&j.CreatedBy, &j.OwnerID, &created, &started, &ended); err != nil {
 		return nil, err
 	}
 	j.CreatedAt = parseTime(created)

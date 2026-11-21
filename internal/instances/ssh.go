@@ -66,6 +66,81 @@ func (s *Service) EnsureSSH(ctx context.Context, name string, image incus.Image,
 	return s.enableSSH(ctx, name, image, password != "")
 }
 
+// EnsureConsoleUser creates the unprivileged account the web terminal logs
+// into. It mirrors the AWS "ubuntu" user: a real home directory, a locked
+// password (key auth only), the owner's SSH key, and a validated sudoers
+// drop-in granting passwordless root. It is idempotent, so re-running it is
+// safe. loginUser comes from config and is validated there before it can be
+// interpolated into these shell commands.
+func (s *Service) EnsureConsoleUser(ctx context.Context, name, key, loginUser string) error {
+	ctx, cancel := context.WithTimeout(ctx, sshCommandTimeout)
+	defer cancel()
+
+	// Account, home, shell and group membership. useradd exists on glibc and
+	// dnf images, adduser on Debian/Alpine; try both before giving up.
+	setup := fmt.Sprintf(`
+set -e
+if ! id -u %[1]s >/dev/null 2>&1; then
+  shell=/bin/bash
+  [ -x "$shell" ] || shell=/bin/sh
+  if command -v useradd >/dev/null 2>&1; then
+    useradd -m -d /home/%[1]s -s "$shell" -U %[1]s
+  elif command -v adduser >/dev/null 2>&1; then
+    adduser -D -h /home/%[1]s -s "$shell" %[1]s
+  else
+    echo "no useradd/adduser available" >&2
+    exit 1
+  fi
+fi
+# Lock the password so only keys (and root's su) can authenticate.
+passwd -l %[1]s >/dev/null 2>&1 || true
+for group in sudo wheel admin; do
+  getent group "$group" >/dev/null 2>&1 || continue
+  if command -v usermod >/dev/null 2>&1; then
+    usermod -aG "$group" %[1]s >/dev/null 2>&1 || true
+  elif command -v addgroup >/dev/null 2>&1; then
+    addgroup %[1]s "$group" >/dev/null 2>&1 || true
+  fi
+done
+mkdir -p /home/%[1]s/.ssh
+chmod 700 /home/%[1]s /home/%[1]s/.ssh
+chown -R %[1]s /home/%[1]s 2>/dev/null || true
+`, loginUser)
+	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", setup); err != nil {
+		return fmt.Errorf("create console user %s: %w", loginUser, err)
+	}
+
+	// Give the default user the owner's key as well, so
+	// `ssh cloud-user@<private-ip>` works just like the web terminal.
+	if key != "" {
+		keyPath := "/home/" + loginUser + "/.ssh/authorized_keys"
+		if err := s.app.Incus.PushFile(ctx, name, keyPath, key+"\n", 0, 0, 0o600); err != nil {
+			return err
+		}
+		chown := fmt.Sprintf("chown %[1]s:%[1]s %[2]s 2>/dev/null || chown %[1]s %[2]s 2>/dev/null || true", loginUser, keyPath)
+		if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", chown); err != nil {
+			return fmt.Errorf("set ownership of console user SSH key: %w", err)
+		}
+	}
+
+	// Passwordless sudo. The drop-in is parsed with visudo before it is kept:
+	// a malformed rule would lock every administrator out of sudo.
+	sudoers := fmt.Sprintf("# Managed by Peaceful Cloud Console - do not edit\n%s ALL=(ALL:ALL) NOPASSWD:ALL\n", loginUser)
+	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", "mkdir -p /etc/sudoers.d && chmod 755 /etc/sudoers.d"); err != nil {
+		return fmt.Errorf("prepare sudoers.d: %w", err)
+	}
+	path := "/etc/sudoers.d/99-cloud-console-" + loginUser
+	if err := s.app.Incus.PushFile(ctx, name, path, sudoers, 0, 0, 0o440); err != nil {
+		return err
+	}
+	verify := fmt.Sprintf("if command -v visudo >/dev/null 2>&1; then visudo -cf %[1]s; else echo 'visudo unavailable; skipping syntax check'; fi", path)
+	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", verify); err != nil {
+		_, _ = s.app.Incus.Exec(ctx, name, "", "rm", "-f", path)
+		return fmt.Errorf("invalid sudoers rule for %s: %w", loginUser, err)
+	}
+	return nil
+}
+
 // installSSHKey writes /root/.ssh/authorized_keys via the file API, so key
 // characters never travel through a shell.
 func (s *Service) installSSHKey(ctx context.Context, name, key string) error {
@@ -98,7 +173,9 @@ func (s *Service) ensureSSHServer(ctx context.Context, name string, image incus.
 	ctx, cancel := context.WithTimeout(ctx, sshCommandTimeout)
 	defer cancel()
 
-	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", "command -v sshd"); err == nil {
+	// sudo is installed alongside sshd: the web console's default user needs
+	// it for passwordless root, so an image with only sshd is not finished.
+	if _, err := s.app.Incus.Exec(ctx, name, "", "sh", "-c", "command -v sshd >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1"); err == nil {
 		return nil
 	}
 
@@ -109,11 +186,11 @@ func (s *Service) ensureSSHServer(ctx context.Context, name string, image incus.
 		// is needed; skip it when the cache is younger than a day, and
 		// skip recommended extras (xauth and friends) sshd never needs.
 		install = `test -n "$(find /var/lib/apt/lists -maxdepth 1 -name '*_InRelease' -mmin -1440 2>/dev/null)" || apt-get update` +
-			` && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-server`
+			` && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-server sudo`
 	case "dnf":
-		install = "dnf install -y --setopt=install_weak_deps=False openssh-server"
+		install = "dnf install -y --setopt=install_weak_deps=False openssh-server sudo"
 	case "apk":
-		install = "apk add --no-cache openssh-server openssh-server-common openrc"
+		install = "apk add --no-cache openssh-server openssh-server-common openrc sudo"
 	default:
 		return fmt.Errorf("no SSH install recipe for image %q", image.ID)
 	}

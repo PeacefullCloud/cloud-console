@@ -140,6 +140,11 @@ S3_USE_SSL=true</pre>
                   <option value="viewer">Viewer — read only</option>
                 </select>
               </div>
+              <div class="field">
+                <label for="new_quota">Instance quota</label>
+                <input id="new_quota" name="max_instances" type="number" min="0" value="0">
+                <p class="hint">0 means unlimited; the host-wide limit still applies.</p>
+              </div>
               <button class="btn btn-primary btn-block" type="submit">Create user</button>
             </form>
           </div>

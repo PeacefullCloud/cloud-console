@@ -275,6 +275,8 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .page-head .grow { flex: 1 1 auto; min-width: 0; }
 .page-sub { color: var(--text-muted); font-size: 13.5px; margin: 6px 0 0; }
 .page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Keep Console and the lifecycle buttons the same footprint. */
+.page-actions .btn { min-width: 100px; }
 
 .rule { height: 1px; background: var(--border); border: 0; margin: 18px 0; }
 
@@ -288,6 +290,10 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
   font-family: inherit;
   font-size: 13.5px;
   font-weight: 700;
+  /* Anchors inherit the document line-height while buttons use the UA
+     default, which made the Console link taller than the action buttons. */
+  line-height: 1.2;
+  text-align: center;
   padding: 8px 16px;
   border-radius: var(--radius);
   border: 1px solid var(--border-strong);
@@ -1157,3 +1163,103 @@ body.sidebar-collapsed .sidebar {
   .meter-row { grid-template-columns: 1fr; gap: 6px; }
   .meter-row .meter-value { text-align: left; }
 }
+
+/* ==========================================================================
+   Standalone web console window (wterm)
+   ========================================================================== */
+
+body.console-window {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.console-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+}
+
+.console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 9px 14px;
+  background: var(--blue-900);
+  color: #e7f0fb;
+  border-bottom: 1px solid #061733;
+}
+
+.console-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  min-width: 0;
+}
+.console-title strong { color: #fff; font-size: 14px; }
+.console-sep { color: #7fa6d4; }
+
+.console-led {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8a93a8;
+}
+.console-led.is-ok { background: #37d67a; }
+.console-led.is-err { background: #ff5d5d; }
+
+.console-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.console-tools .btn { background: transparent; color: #e7f0fb; border-color: #4b6f9e; }
+.console-tools .btn:hover { background: #17406f; color: #fff; border-color: #8ab4e6; }
+
+.console-status {
+  font-size: 12px;
+  color: #c7d8ee;
+  margin-right: 4px;
+}
+.console-status.is-ok { color: #9ce9bd; }
+.console-status.is-err { color: #ffb3b3; }
+
+.console-warn {
+  padding: 8px 14px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border-bottom: 1px solid #f0d9b5;
+  font-size: 12.5px;
+}
+
+/* host is sized by console.js; wterm mounts its .wterm grid inside it. */
+#terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  --term-bg: #0b1630;
+  --term-fg: #d7e3ff;
+  --term-cursor: #8fd0ff;
+  --term-color-0: #0b1630;
+  --term-color-7: #d7e3ff;
+}
+#terminal .wterm { border-radius: 0; box-shadow: none; }
+
+.console-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--surface-alt);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.console-foot code { font-family: var(--mono); color: var(--blue-700); }

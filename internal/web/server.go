@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bufio"
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -56,14 +58,26 @@ type Server struct {
 	streamCtx   context.Context
 	stopStreams context.CancelFunc
 
-	feedOnce sync.Once
-	jobs     *feed
+	// consoleCtx is cancelled on shutdown so live terminal sessions tear down
+	// their Incus exec operations instead of leaving shells behind.
+	consoleCtx   context.Context
+	stopConsoles context.CancelFunc
+
+	feedMu   sync.Mutex
+	jobFeeds map[string]*feed
+
+	// Live web-terminal sessions, counted globally and per tenant so one
+	// tenant cannot monopolise the Incus exec capacity.
+	consoleMu       sync.Mutex
+	consoleSessions int
+	consoleByUser   map[int64]int
 }
 
 // New builds the server and registers every route.
 func New(deps Deps) *Server {
-	s := &Server{Deps: deps, log: deps.App.Log, mux: http.NewServeMux()}
+	s := &Server{Deps: deps, log: deps.App.Log, mux: http.NewServeMux(), jobFeeds: map[string]*feed{}}
 	s.streamCtx, s.stopStreams = context.WithCancel(context.Background())
+	s.consoleCtx, s.stopConsoles = context.WithCancel(context.Background())
 	s.routes()
 	return s
 }
@@ -72,7 +86,12 @@ func New(deps Deps) *Server {
 // http.Server.Shutdown so Ctrl+C shuts down promptly instead of waiting out
 // the shutdown timeout with a fatal "context deadline exceeded".
 func (s *Server) CloseEventStreams() {
-	s.stopStreams()
+	if s.stopStreams != nil {
+		s.stopStreams()
+	}
+	if s.stopConsoles != nil {
+		s.stopConsoles()
+	}
 }
 
 // Handler returns the middleware-wrapped handler.
@@ -82,6 +101,9 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	// Static assets are served without authentication.
 	mux.Handle("GET /static/", noDirectoryListing(http.StripPrefix("/static/", static)))
 	mux.Handle("GET /healthz", http.HandlerFunc(s.health))
+
+	// Caddy's on-demand TLS gate must be reachable without a session.
+	mux.HandleFunc("GET /api/internal/tls-check", s.handleTLSAsk)
 
 	// Everything else goes through the full middleware chain.
 	mux.Handle("/", s.mux)
@@ -108,29 +130,35 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /create/blueprints", s.handleBlueprints)
 	m.HandleFunc("POST /instances", s.handleCreateSubmit)
 
-	m.HandleFunc("GET /instances/{name}", s.handleInstance)
-	m.HandleFunc("GET /instances/{name}/tab/{tab}", s.handleInstanceTab)
-	m.HandleFunc("GET /instances/{name}/header", s.handleInstanceHeader)
+	m.HandleFunc("GET /instances/{name}", s.requireInstance(s.handleInstance))
+	m.HandleFunc("GET /instances/{name}/tab/{tab}", s.requireInstance(s.handleInstanceTab))
+	m.HandleFunc("GET /instances/{name}/header", s.requireInstance(s.handleInstanceHeader))
+	// The standalone console window and its socket both pass through
+	// requireInstance, so a tenant can never reach another tenant's instance
+	// by guessing a name in either URL.
+	m.HandleFunc("GET /instances/{name}/console", s.requireInstance(s.handleConsolePage))
+	m.HandleFunc("GET /instances/{name}/console/ws", s.requireInstance(s.handleConsoleSocket))
 
-	m.HandleFunc("POST /instances/{name}/state", s.handleInstanceState)
-	m.HandleFunc("POST /instances/{name}/delete", s.handleInstanceDelete)
-	m.HandleFunc("POST /instances/{name}/rename", s.handleInstanceRename)
-	m.HandleFunc("POST /instances/{name}/rebuild", s.handleInstanceRebuild)
-	m.HandleFunc("POST /instances/{name}/limits", s.handleInstanceLimits)
-	m.HandleFunc("POST /instances/{name}/notes", s.handleInstanceNotes)
+	m.HandleFunc("POST /instances/{name}/state", s.requireInstance(s.handleInstanceState))
+	m.HandleFunc("POST /instances/{name}/delete", s.requireInstance(s.handleInstanceDelete))
+	m.HandleFunc("POST /instances/{name}/rename", s.requireInstance(s.handleInstanceRename))
+	m.HandleFunc("POST /instances/{name}/rebuild", s.requireInstance(s.handleInstanceRebuild))
+	m.HandleFunc("POST /instances/{name}/limits", s.requireInstance(s.handleInstanceLimits))
+	m.HandleFunc("POST /instances/{name}/notes", s.requireInstance(s.handleInstanceNotes))
+	m.HandleFunc("POST /instances/{name}/owner", s.requireInstance(s.handleInstanceOwner))
 
-	m.HandleFunc("POST /instances/{name}/snapshots", s.handleSnapshotCreate)
-	m.HandleFunc("POST /instances/{name}/snapshots/{snapshot}/delete", s.handleSnapshotDelete)
-	m.HandleFunc("POST /instances/{name}/snapshots/{snapshot}/restore", s.handleSnapshotRestore)
+	m.HandleFunc("POST /instances/{name}/snapshots", s.requireInstance(s.handleSnapshotCreate))
+	m.HandleFunc("POST /instances/{name}/snapshots/{snapshot}/delete", s.requireInstance(s.handleSnapshotDelete))
+	m.HandleFunc("POST /instances/{name}/snapshots/{snapshot}/restore", s.requireInstance(s.handleSnapshotRestore))
 
-	m.HandleFunc("POST /instances/{name}/backups", s.handleBackupCreate)
-	m.HandleFunc("POST /instances/{name}/backups/{backup}/delete", s.handleBackupDelete)
-	m.HandleFunc("POST /instances/{name}/backups/{backup}/restore", s.handleBackupRestore)
-	m.HandleFunc("POST /instances/{name}/backups/{backup}/export", s.handleBackupExport)
+	m.HandleFunc("POST /instances/{name}/backups", s.requireInstance(s.handleBackupCreate))
+	m.HandleFunc("POST /instances/{name}/backups/{backup}/delete", s.requireInstance(s.handleBackupDelete))
+	m.HandleFunc("POST /instances/{name}/backups/{backup}/restore", s.requireInstance(s.handleBackupRestore))
+	m.HandleFunc("POST /instances/{name}/backups/{backup}/export", s.requireInstance(s.handleBackupExport))
 
-	m.HandleFunc("POST /instances/{name}/domains", s.handleDomainCreate)
-	m.HandleFunc("POST /instances/{name}/domains/{id}/delete", s.handleInstanceDomainDelete)
-	m.HandleFunc("POST /domains/{id}/delete", s.handleDomainDelete)
+	m.HandleFunc("POST /instances/{name}/domains", s.requireInstance(s.handleDomainCreate))
+	m.HandleFunc("POST /instances/{name}/domains/{id}/delete", s.requireInstance(s.handleInstanceDomainDelete))
+	m.HandleFunc("POST /domains/{id}/delete", s.requireDomain(s.handleDomainDelete))
 
 	m.HandleFunc("GET /snapshots", s.handleSnapshots)
 	m.HandleFunc("GET /backups", s.handleBackups)
@@ -145,6 +173,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /settings/users", s.handleUserCreate)
 	m.HandleFunc("POST /settings/users/{id}/delete", s.handleUserDelete)
 	m.HandleFunc("POST /settings/users/{id}/password", s.handleUserPasswordReset)
+	m.HandleFunc("POST /settings/users/{id}/quota", s.handleUserQuota)
 	m.HandleFunc("POST /settings/sessions/{id}/revoke", s.handleSessionRevoke)
 	m.HandleFunc("POST /settings/sessions/revoke-others", s.handleSessionsRevokeOthers)
 	m.HandleFunc("POST /settings/users/{id}/method", s.handleUserMethod)
@@ -189,9 +218,10 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 // withAuth resolves the session and rejects unauthenticated requests.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	public := map[string]bool{
-		"/login":      true,
-		"/login/totp": true,
-		"/healthz":    true,
+		"/login":                  true,
+		"/login/totp":             true,
+		"/healthz":                true,
+		"/api/internal/tls-check": true,
 		// Authenticated by its own bearer token, not by a session.
 		"/metrics": true,
 	}
@@ -206,6 +236,13 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 				return
 			}
 			s.clearCookie(w, sessionCookie)
+		}
+
+		// A websocket handshake cannot follow a login redirect. Answer 401 so
+		// the terminal client can report a clear authentication failure.
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
 		}
 
 		if public[r.URL.Path] {
@@ -312,6 +349,16 @@ func (s *statusRecorder) WriteHeader(code int) {
 // needs to clear the write deadline on long-lived streams.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// Hijack exposes the underlying connection to the websocket upgrader. Gorilla
+// v1.5.3 type-asserts http.Hijacker directly rather than following Unwrap, so
+// without this the terminal's upgrade would fail with a 500.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijacking is not supported by this response writer")
+}
+
 // Flush forwards SSE flushes. Without it, withLogging's wrapper hides the
 // underlying Flusher and GET /jobs/stream fails with 500.
 func (s *statusRecorder) Flush() {
@@ -400,13 +447,14 @@ func (s *Server) newBase(w http.ResponseWriter, r *http.Request, nav, title stri
 	kind, message := s.takeFlash(w, r)
 
 	base := baseData{
-		Title:       title,
-		Nav:         nav,
-		CSRF:        csrfFrom(r),
-		User:        userFrom(r),
-		Version:     s.Version,
-		IncusSocket: s.App.Incus.Socket(),
-		Query:       r.URL.Query().Get("q"),
+		Title:        title,
+		Nav:          nav,
+		CSRF:         csrfFrom(r),
+		User:         userFrom(r),
+		Version:      s.Version,
+		IncusSocket:  s.App.Incus.Socket(),
+		TerminalUser: s.App.Cfg.TerminalLoginUser,
+		Query:        r.URL.Query().Get("q"),
 	}
 
 	switch kind {
@@ -418,16 +466,17 @@ func (s *Server) newBase(w http.ResponseWriter, r *http.Request, nav, title stri
 		base.Error = message
 	}
 
-	if count, err := s.App.DB.CountInstanceMeta(); err == nil {
+	if count, err := s.App.DB.CountInstanceMetaScoped(scopeFrom(r)); err == nil {
 		base.InstanceCount = count
 	}
 
 	return base
 }
 
-// withJobs attaches the active jobs so the tracker can render inline.
-func (s *Server) withJobs(base baseData) baseData {
-	if jobs, err := s.App.DB.ListActiveJobs(); err == nil {
+// withJobs attaches the active jobs the signed-in user may see so the tracker
+// can render inline.
+func (s *Server) withJobs(base baseData, r *http.Request) baseData {
+	if jobs, err := s.App.DB.ListActiveJobsScoped(scopeFrom(r)); err == nil {
 		base.Jobs = jobs
 	}
 	return base
@@ -484,6 +533,55 @@ func checkAdminAccess(r *http.Request) error {
 	return nil
 }
 
+// scopeFrom returns the data scope of the signed-in user.
+func scopeFrom(r *http.Request) models.Scope {
+	user := userFrom(r)
+	if user == nil {
+		return models.Scope{}
+	}
+	return models.Scope{UserID: user.ID, Admin: auth.CanAdmin(user.Role)}
+}
+
+// requireInstance wraps an instance-scoped handler and refuses instances the
+// signed-in user does not own. It answers 404 rather than 403 so a tenant
+// cannot probe for instance names they have no access to. Administrators pass
+// through, including for instances created outside the console.
+func (s *Server) requireInstance(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := scopeFrom(r)
+		if !scope.Admin {
+			meta, err := s.App.DB.GetInstanceMeta(r.PathValue("name"))
+			if err != nil || !scope.CanAccessOwner(meta.OwnerID) {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+// requireDomain wraps the domain-by-id handler so a tenant cannot delete a
+// domain attached to somebody else's instance. The domain resolves to its
+// instance first; the instance owner decides access.
+func (s *Server) requireDomain(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := scopeFrom(r)
+		if !scope.Admin {
+			domain, err := s.App.DB.GetDomain(int64(atoiDefault(r.PathValue("id"), 0)))
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			meta, err := s.App.DB.GetInstanceMeta(domain.InstanceName)
+			if err != nil || !scope.CanAccessOwner(meta.OwnerID) {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
 // succeed reports a successful mutation and redirects back.
 func (s *Server) succeed(w http.ResponseWriter, r *http.Request, fallback, message string) {
 	s.setFlash(w, "ok", message)
@@ -507,6 +605,11 @@ func friendlyError(err error) string {
 		return "That name is already taken."
 	case errors.Is(err, instances.ErrInvalidSpec):
 		return msg
+	case strings.Contains(strings.ToLower(msg), "instance is running"):
+		// Incus refuses to delete a running instance. The console keeps that
+		// safety rule; spell out the next step instead of surfacing the raw
+		// daemon error.
+		return "Stop this instance first, then delete it."
 	default:
 		return msg
 	}

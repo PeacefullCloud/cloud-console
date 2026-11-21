@@ -1,11 +1,23 @@
 package web
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/peaceful/cloud-console/internal/instances"
 )
+
+func TestFriendlyErrorRunningInstance(t *testing.T) {
+	got := friendlyError(errors.New("Instance is running"))
+	if got != "Stop this instance first, then delete it." {
+		t.Errorf("friendlyError = %q", got)
+	}
+	// Unrelated Incus errors must still reach the user verbatim.
+	if got := friendlyError(errors.New("some other failure")); got != "some other failure" {
+		t.Errorf("unrelated error was rewritten to %q", got)
+	}
+}
 
 func TestParseSizeValue(t *testing.T) {
 	cpu, mem, disk, ok := ParseSizeValue("2|4096|60")

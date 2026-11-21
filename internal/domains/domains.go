@@ -45,9 +45,9 @@ func New(app *core.App) *Service {
 	return &Service{app: app}
 }
 
-// List returns every domain with its resolved upstream.
-func (s *Service) List(ctx context.Context) ([]Record, error) {
-	rows, err := s.app.DB.ListDomains()
+// List returns the domains in scope with their resolved upstream.
+func (s *Service) List(ctx context.Context, scope models.Scope) ([]Record, error) {
+	rows, err := s.app.DB.ListDomainsScoped(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,13 @@ func (s *Service) Add(ctx context.Context, instanceName, domain string, port int
 		_ = s.app.DB.SetPrimaryHost(instanceName, domain)
 	}
 
-	return s.Sync(ctx)
+	// Routing is best-effort: a Caddy that is not running (or a permission
+	// problem writing its file) must not make the domain mapping look failed,
+	// since the row is already recorded and will be picked up on the next sync.
+	if err := s.Sync(ctx); err != nil {
+		s.app.Log.Warn("could not apply caddy configuration", "domain", domain, "err", err)
+	}
+	return nil
 }
 
 // Delete removes a domain mapping.
@@ -119,7 +125,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		_ = s.app.DB.SetPrimaryHost(row.InstanceName, next)
 	}
 
-	return s.Sync(ctx)
+	if err := s.Sync(ctx); err != nil {
+		s.app.Log.Warn("could not apply caddy configuration", "id", id, "err", err)
+	}
+	return nil
 }
 
 // DeleteForInstance removes every domain attached to an instance.
@@ -127,7 +136,10 @@ func (s *Service) DeleteForInstance(ctx context.Context, instanceName string) er
 	if err := s.app.DB.DeleteDomainsForInstance(instanceName); err != nil {
 		return err
 	}
-	return s.Sync(ctx)
+	if err := s.Sync(ctx); err != nil {
+		s.app.Log.Warn("could not apply caddy configuration", "instance", instanceName, "err", err)
+	}
+	return nil
 }
 
 // InstanceChanged implements instances.Notifier so routing is refreshed after

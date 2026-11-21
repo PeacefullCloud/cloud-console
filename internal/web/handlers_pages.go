@@ -4,14 +4,20 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
+	"io"
 	"net/http"
-	"strings"
+	"sync"
 	"time"
+	"strconv"
+	"strings"
 
 	"github.com/skip2/go-qrcode"
 
 	"github.com/peaceful/cloud-console/internal/auth"
+	"github.com/peaceful/cloud-console/internal/core"
 	"github.com/peaceful/cloud-console/internal/database"
+	"github.com/peaceful/cloud-console/internal/domains"
 	"github.com/peaceful/cloud-console/internal/instances"
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/sso"
@@ -52,6 +58,15 @@ func (s *Server) handleInstanceDomainDelete(w http.ResponseWriter, r *http.Reque
 
 	err := checkWriteAccess(r)
 	if err == nil {
+		// The {name} in the URL must be the domain's actual instance:
+		// otherwise somebody with access to one instance could remove a
+		// domain belonging to another by mixing the two path values.
+		dom, derr := s.App.DB.GetDomain(id)
+		if derr != nil || dom.InstanceName != name {
+			err = domains.ErrNotFound
+		}
+	}
+	if err == nil {
 		ctx, cancel := operationContext(r)
 		defer cancel()
 		err = s.Domains.Delete(ctx, id)
@@ -83,7 +98,7 @@ func (s *Server) handleDomainDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Domains.List(r.Context())
+	list, err := s.Domains.List(r.Context(), scopeFrom(r))
 	if err != nil {
 		s.renderError(w, r, "Domains & DNS", "domains", err)
 		return
@@ -93,7 +108,7 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 		baseData:     s.newBase(w, r, "domains", "Domains & DNS"),
 		Domains:      list,
 		CaddyEnabled: s.Domains.CaddyEnabled(),
-		PublicIP:     strings.TrimSpace(s.App.DB.GetSetting("network.public_ip", "")),
+		PublicIP:     publicIPFor(s.App, r),
 	}
 	// The generated Caddyfile covers every route on the host.
 	if checkAdminAccess(r) == nil {
@@ -102,28 +117,139 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "domains", http.StatusOK, data)
 }
 
+// handleTLSAsk is Caddy's on-demand TLS gate. Caddy calls it before issuing a
+// certificate for a hostname; we answer 200 only for domains that are actually
+// configured, so an attacker cannot burn Let's Encrypt rate limits with
+// arbitrary Host headers.
+func (s *Server) handleTLSAsk(w http.ResponseWriter, r *http.Request) {
+	domain := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("domain")))
+	if domain == "" {
+		http.Error(w, "missing domain", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.App.DB.GetDomainByName(domain); err != nil {
+		http.Error(w, "not allowed", http.StatusForbidden)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// publicIPFor resolves the shared public IP to show for DNS setup: the database
+// setting, then CONSOLE_PUBLIC_IP, then the first non-private IPv4 on a host
+// interface, and finally the host the browser used to reach the console.
+func publicIPFor(app *core.App, r *http.Request) string {
+	if v := strings.TrimSpace(app.DB.GetSetting("network.public_ip", "")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(app.Cfg.PublicIP); v != "" {
+		return v
+	}
+	if v := detectPublicIP(); v != "" {
+		return v
+	}
+	host := strings.TrimSpace(r.Host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
+
+var (
+	detectedPublicIP     string
+	detectedPublicIPOnce sync.Once
+)
+
+
+// isPublicIPv4 reports whether ip is a globally routable IPv4 address, excluding
+// loopback, private, link-local and carrier-grade NAT ranges.
+func isPublicIPv4(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	// Carrier-grade NAT (RFC 6598) is not covered by IsPrivate in all
+	// versions, but is never a public address.
+	if _, cg, err := net.ParseCIDR("100.64.0.0/10"); err == nil && cg.Contains(ip) {
+		return false
+	}
+	return true
+}
+
+// detectPublicIP returns a usable public IP: first a non-private IPv4 on a
+// host interface, otherwise the address Cloudflare sees for this host (so
+// NAT-mapped static IPs are picked up automatically).
+func detectPublicIP() string {
+	detectedPublicIPOnce.Do(func() {
+		// 1. Local interfaces.
+		ifaces, err := net.Interfaces()
+		if err == nil {
+			for _, iface := range ifaces {
+				addrs, err := iface.Addrs()
+				if err != nil {
+					continue
+				}
+				for _, a := range addrs {
+					var ip net.IP
+					switch v := a.(type) {
+					case *net.IPNet:
+						ip = v.IP
+					case *net.IPAddr:
+						ip = v.IP
+					}
+					if ip == nil || ip.IsLoopback() {
+						continue
+					}
+					if ip4 := ip.To4(); ip4 != nil && isPublicIPv4(ip4) {
+						detectedPublicIP = ip4.String()
+						return
+					}
+				}
+			}
+		}
+
+		// 2. Ask Cloudflare what public address it sees.
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Get("https://cloudflare.com/cdn-cgi/trace")
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(line, "ip=") {
+				detectedPublicIP = strings.TrimSpace(strings.TrimPrefix(line, "ip="))
+				return
+			}
+		}
+	})
+	return detectedPublicIP
+}
+
 // handleActivity renders the audit log with simple pagination.
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	const limit = 50
+	scope := scopeFrom(r)
 
 	page := atoiDefault(r.URL.Query().Get("page"), 1)
 	if page < 1 {
 		page = 1
 	}
 
-	total, err := s.App.DB.CountActivity()
+	total, err := s.App.DB.CountActivityScoped(scope)
 	if err != nil {
 		s.renderError(w, r, "Activity", "activity", err)
 		return
 	}
 
-	items, err := s.App.DB.ListActivity(limit, (page-1)*limit)
+	items, err := s.App.DB.ListActivityScoped(scope, limit, (page-1)*limit)
 	if err != nil {
 		s.renderError(w, r, "Activity", "activity", err)
 		return
 	}
 
-	jobs, err := s.App.DB.ListJobs(15)
+	jobs, err := s.App.DB.ListJobsScoped(scope, 15)
 	if err != nil {
 		s.log.Warn("could not list jobs", "err", err)
 	}
@@ -147,7 +273,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 
 // handleActiveJobs renders just the job tracker for HTMX polling.
 func (s *Server) handleActiveJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.App.DB.ListActiveJobs()
+	jobs, err := s.App.DB.ListActiveJobsScoped(scopeFrom(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -195,7 +321,7 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "retry: 3000\n\n")
 	flusher.Flush()
 
-	frames, unsubscribe := s.jobFeed().subscribe(s.streamCtx)
+	frames, unsubscribe := s.jobFeed(scopeFrom(r)).subscribe(s.streamCtx)
 	defer unsubscribe()
 
 	heartbeat := time.NewTicker(15 * time.Second)
@@ -221,18 +347,35 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// jobFeed is the one renderer behind every open job stream.
-func (s *Server) jobFeed() *feed {
-	s.feedOnce.Do(func() {
-		s.jobs = newFeed(2*time.Second, s.renderJobTracker)
+// jobFeed returns the one renderer behind every open job stream for a scope.
+// Feeds are kept per scope so a tenant's stream can never carry another
+// tenant's job names or progress.
+func (s *Server) jobFeed(scope models.Scope) *feed {
+	key := "admin"
+	if !scope.Admin {
+		key = "user:" + strconv.FormatInt(scope.UserID, 10)
+	}
+
+	s.feedMu.Lock()
+	defer s.feedMu.Unlock()
+	if s.jobFeeds == nil {
+		s.jobFeeds = map[string]*feed{}
+	}
+	if f, ok := s.jobFeeds[key]; ok {
+		return f
+	}
+
+	f := newFeed(2*time.Second, func() (string, string, error) {
+		return s.renderJobTracker(scope)
 	})
-	return s.jobs
+	s.jobFeeds[key] = f
+	return f
 }
 
 // renderJobTracker renders the job_list partial and returns its HTML plus a
 // fingerprint used to detect changes between polls.
-func (s *Server) renderJobTracker() (string, string, error) {
-	jobs, err := s.App.DB.ListActiveJobs()
+func (s *Server) renderJobTracker(scope models.Scope) (string, string, error) {
+	jobs, err := s.App.DB.ListActiveJobsScoped(scope)
 	if err != nil {
 		return "", "", err
 	}
@@ -270,7 +413,7 @@ func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := s.Instances.List(r.Context())
+	list, err := s.Instances.List(r.Context(), scopeFrom(r))
 	if err != nil {
 		s.renderError(w, r, "Storage", "storage", err)
 		return
@@ -332,7 +475,7 @@ func (s *Server) handleNetworking(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("could not list networks", "err", err)
 	}
 
-	list, err := s.Instances.List(r.Context())
+	list, err := s.Instances.List(r.Context(), scopeFrom(r))
 	if err != nil {
 		s.renderError(w, r, "Networking", "networking", err)
 		return
@@ -421,6 +564,11 @@ func (s *Server) fillAdminSettings(r *http.Request, data *settingsData) error {
 	data.Host = host
 	data.Users = users
 	data.Links = s.SSO.IdentityLabels()
+	if usage, err := s.App.DB.InstanceCountsByOwner(); err != nil {
+		s.log.Warn("could not count instances per owner", "err", err)
+	} else {
+		data.Usage = usage
+	}
 
 	data.S3Configured = s.App.Cfg.S3Configured()
 	data.S3Bucket = s.App.Cfg.S3Bucket
@@ -448,7 +596,7 @@ func (s *Server) fillAdminSettings(r *http.Request, data *settingsData) error {
 	}
 	data.SSOKeySet = s.App.Cfg.SSOKeySet()
 
-	if list, err := s.Instances.List(r.Context()); err == nil {
+	if list, err := s.Instances.List(r.Context(), scopeFrom(r)); err == nil {
 		running := 0
 		for _, i := range list {
 			if i.Running {
@@ -472,13 +620,29 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	role := r.FormValue("role")
 
+	quota := 0
+	var quotaErr error
+	if raw := strings.TrimSpace(r.FormValue("max_instances")); raw != "" {
+		n, perr := strconv.Atoi(raw)
+		if perr != nil || n < 0 {
+			quotaErr = errors.New("the instance quota must be zero or a positive whole number")
+		} else {
+			quota = n
+		}
+	}
+
 	if err := checkAdminAccess(r); err != nil {
 		s.App.Activity.Record(actor.Username, "Create user", username, role, err)
 		s.finish(w, r, "/settings", err, "")
 		return
 	}
+	if quotaErr != nil {
+		s.App.Activity.Record(actor.Username, "Create user", username, role, quotaErr)
+		s.finish(w, r, "/settings", quotaErr, "")
+		return
+	}
 
-	err := s.createUser(username, password, role)
+	err := s.createUser(username, password, role, quota)
 	s.App.Activity.Record(actor.Username, "Create user", username, role, err)
 
 	if isHTMX(r) {
@@ -508,6 +672,11 @@ func (s *Server) serveUsersFragments(w http.ResponseWriter, r *http.Request, act
 		} else {
 			data.Users = users
 		}
+		if usage, err := s.App.DB.InstanceCountsByOwner(); err != nil {
+			s.log.Warn("could not count instances per owner", "err", err)
+		} else {
+			data.Usage = usage
+		}
 	}
 
 	if err := s.Renderer.RenderPartial(w, "settings", "users_response", data); err != nil {
@@ -535,6 +704,8 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 			err = errors.New("you cannot delete your own account")
 		} else if target.Role == auth.RoleAdmin && s.adminCountExcept(target.ID) == 0 {
 			err = errors.New("cannot delete the last admin account")
+		} else if berr := s.userRemovalBlocked(target.ID); berr != nil {
+			err = berr
 		} else {
 			// Sessions cascade on delete, but clear them explicitly in case
 			// foreign keys are ever disabled.
@@ -572,6 +743,73 @@ func (s *Server) adminCountExcept(exceptID int64) int {
 		}
 	}
 	return count
+}
+
+// userRemovalBlocked refuses deleting an account that still owns instances or
+// has work in flight. Deleting it would orphan the instances (they become
+// admin-only) or leave a queued job pointing at a tenant that no longer exists.
+func (s *Server) userRemovalBlocked(id int64) error {
+	if n, err := s.App.DB.CountInstancesByOwner(id); err != nil {
+		return err
+	} else if n > 0 {
+		return fmt.Errorf("this user owns %d instance(s) — reassign them before deleting the account", n)
+	}
+
+	if n, err := s.App.DB.CountActiveJobsByOwner(id); err != nil {
+		return err
+	} else if n > 0 {
+		return fmt.Errorf("this user has %d queued or running job(s) — wait for them to finish", n)
+	}
+	return nil
+}
+
+// handleUserQuota changes a user's per-account instance limit. Only admins may
+// do so; 0 means unlimited and the host-wide limit still applies.
+func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
+	actor := userFrom(r)
+	if actor == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	id := int64(atoiDefault(r.PathValue("id"), 0))
+	raw := strings.TrimSpace(r.FormValue("max_instances"))
+
+	var target *models.User
+	var quota int
+	err := checkAdminAccess(r)
+	if err == nil {
+		target, err = s.App.DB.GetUser(id)
+	}
+	if err == nil {
+		if quota, err = strconv.Atoi(raw); err != nil || quota < 0 {
+			quota = 0
+			err = errors.New("the instance quota must be zero or a positive whole number")
+		}
+	}
+	if err == nil {
+		err = s.App.DB.SetUserQuota(id, quota)
+	}
+
+	label := ""
+	if target != nil {
+		label = target.Username
+	}
+	detail := ""
+	notice := ""
+	if err != nil {
+		s.App.Activity.Record(actor.Username, "Set instance quota", label, raw, err)
+	} else {
+		detail = fmt.Sprintf("max_instances=%d", quota)
+		notice = "Quota for " + label + " set to " + strconv.Itoa(quota) + "."
+		s.App.Activity.Record(actor.Username, "Set instance quota", label, detail, nil)
+	}
+
+	if isHTMX(r) {
+		s.serveUsersFragments(w, r, err, notice)
+		return
+	}
+	s.finish(w, r, "/settings", err, notice)
 }
 
 func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
@@ -896,7 +1134,7 @@ func maskSecret(value string) string {
 }
 
 // createUser validates and stores a new console user.
-func (s *Server) createUser(username, password, role string) error {
+func (s *Server) createUser(username, password, role string, maxInstances int) error {
 	username = strings.TrimSpace(username)
 	if len(username) < 3 || len(username) > 32 {
 		return errors.New("usernames must be between 3 and 32 characters")
@@ -919,6 +1157,10 @@ func (s *Server) createUser(username, password, role string) error {
 		return errors.New("unknown role")
 	}
 
+	if maxInstances < 0 {
+		return errors.New("the instance quota must be zero or a positive whole number")
+	}
+
 	if _, err := s.App.DB.GetUserByUsername(username); err == nil {
 		return errors.New("that username already exists")
 	} else if !errors.Is(err, database.ErrNotFound) {
@@ -930,6 +1172,12 @@ func (s *Server) createUser(username, password, role string) error {
 		return err
 	}
 
-	_, err = s.App.DB.CreateUser(username, hash, role)
-	return err
+	user, err := s.App.DB.CreateUser(username, hash, role)
+	if err != nil {
+		return err
+	}
+	if maxInstances > 0 {
+		return s.App.DB.SetUserQuota(user.ID, maxInstances)
+	}
+	return nil
 }

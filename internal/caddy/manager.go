@@ -63,9 +63,13 @@ func (m *Manager) Render(routes []Route) string {
 
 	b.WriteString("{\n")
 	b.WriteString("\t# Console-wide defaults.\n")
-	b.WriteString("\tservers {\n")
-	b.WriteString("\t\ttrusted_proxies static private_ranges\n")
-	b.WriteString("\t}\n")
+	b.WriteString("\tadmin localhost:2019\n")
+
+	if ask := m.tlsAskURL(); ask != "" {
+		b.WriteString("\ton_demand_tls {\n")
+		fmt.Fprintf(&b, "\t\task %s\n", ask)
+		b.WriteString("\t}\n")
+	}
 	b.WriteString("}\n")
 
 	// Optional block for the console itself.
@@ -89,6 +93,9 @@ func (m *Manager) Render(routes []Route) string {
 		seen[r.Domain] = true
 
 		fmt.Fprintf(&b, "\n%s {\n", r.Domain)
+		if ip := detectLANIP(); ip != "" {
+			fmt.Fprintf(&b, "\tbind %s\n", ip)
+		}
 		b.WriteString("\tencode zstd gzip\n")
 		fmt.Fprintf(&b, "\treverse_proxy %s {\n", r.Upstream)
 		b.WriteString("\t\theader_up Host {upstream_hostport}\n")
@@ -102,6 +109,65 @@ func (m *Manager) Render(routes []Route) string {
 	}
 
 	return b.String()
+}
+
+// tlsAskURL is the endpoint Caddy calls before issuing an on-demand
+// certificate. It is only advertised when the console can be reached on
+// loopback, which is always true for a correctly deployed console.
+func (m *Manager) tlsAskURL() string {
+	addr := strings.TrimSpace(m.cfg.Addr)
+	if addr == "" {
+		return ""
+	}
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":8080"
+	}
+	host := addr
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		if h == "" || h == "0.0.0.0" || h == "::" {
+			h = "127.0.0.1"
+		}
+		host = net.JoinHostPort(h, p)
+	}
+	return "http://" + host + "/api/internal/tls-check"
+}
+
+// detectLANIP returns the first private (LAN) IPv4 address assigned to a host
+// interface, used to bind Caddy away from the metadata service on 169.254.x.x.
+func detectLANIP() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil && ip4.IsPrivate() {
+				// Skip carrier-grade NAT and link-local ranges.
+				if _, cg, err := net.ParseCIDR("100.64.0.0/10"); err == nil && cg.Contains(ip4) {
+					continue
+				}
+				if ip4.IsLinkLocalUnicast() {
+					continue
+				}
+				return ip4.String()
+			}
+		}
+	}
+	return ""
 }
 
 // ConsoleHost is the hostname the console itself is served on through Caddy,
@@ -181,7 +247,7 @@ func (m *Manager) reload(ctx context.Context, rendered string) error {
 		if m.cfg.CaddyConfigPath == "" {
 			return nil
 		}
-		cmdline = "caddy reload --config " + shellQuote(m.cfg.CaddyConfigPath)
+		cmdline = "caddy reload --config " + shellQuote(m.cfg.CaddyConfigPath) + " --adapter caddyfile"
 	}
 
 	parts := strings.Fields(cmdline)

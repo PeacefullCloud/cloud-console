@@ -89,6 +89,7 @@ type Instance struct {
 
 	CreatedAt   time.Time
 	LastUsedAt  time.Time
+	OwnerID     int64
 	Owner       string
 	PrimaryHost string
 	Notes       string
@@ -139,14 +140,16 @@ func (i Instance) CPULabel() string {
 	return fmt.Sprintf("%d vCPU", i.CPU)
 }
 
-// List returns every instance known to Incus, enriched with console metadata.
-func (s *Service) List(ctx context.Context) ([]Instance, error) {
+// List returns the instances in scope, enriched with console metadata.
+// Administrators see every instance Incus knows, including ones created
+// outside the console; everyone else sees only instances they own.
+func (s *Service) List(ctx context.Context, scope models.Scope) ([]Instance, error) {
 	fulls, err := s.app.Incus.Instances(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	meta, err := s.app.DB.ListInstanceMeta()
+	meta, err := s.app.DB.ListInstanceMetaScoped(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +167,11 @@ func (s *Service) List(ctx context.Context) ([]Instance, error) {
 
 	out := make([]Instance, 0, len(fulls))
 	for i := range fulls {
+		if !scope.All() {
+			if _, ok := meta[fulls[i].Name]; !ok {
+				continue
+			}
+		}
 		out = append(out, s.merge(&fulls[i], meta, domains, samples))
 	}
 
@@ -243,6 +251,7 @@ func (s *Service) merge(full *incusapi.InstanceFull, meta map[string]models.Inst
 		view.Tracked = true
 		view.Image = m.Image
 		view.ImageLabel = m.ImageLabel
+		view.OwnerID = m.OwnerID
 		view.Owner = m.OwnerName
 		view.Notes = m.Notes
 		if m.PrimaryHost != "" {
@@ -345,8 +354,8 @@ type Totals struct {
 	BackupBytes int64
 }
 
-// Totals aggregates dashboard counters.
-func (s *Service) Totals(ctx context.Context, list []Instance) (Totals, error) {
+// Totals aggregates dashboard counters for the instances in scope.
+func (s *Service) Totals(ctx context.Context, list []Instance, scope models.Scope) (Totals, error) {
 	var t Totals
 	t.Instances = len(list)
 
@@ -362,13 +371,13 @@ func (s *Service) Totals(ctx context.Context, list []Instance) (Totals, error) {
 	}
 
 	var err error
-	if t.Domains, err = s.app.DB.CountDomains(); err != nil {
+	if t.Domains, err = s.app.DB.CountDomainsScoped(scope); err != nil {
 		return t, err
 	}
-	if t.Snapshots, err = s.app.DB.CountSnapshots(); err != nil {
+	if t.Snapshots, err = s.app.DB.CountSnapshotsScoped(scope); err != nil {
 		return t, err
 	}
-	if t.Backups, t.BackupBytes, err = s.app.DB.BackupTotals(); err != nil {
+	if t.Backups, t.BackupBytes, err = s.app.DB.BackupTotalsScoped(scope); err != nil {
 		return t, err
 	}
 
@@ -411,6 +420,28 @@ func (s *Service) ensureMetaExists(ctx context.Context, name string) error {
 		DiskGB:      int(incus.InstanceDiskBytes(inst) >> 30),
 		StoragePool: incus.InstanceStoragePool(inst),
 	})
+}
+
+// SetOwner changes the tenant an instance belongs to. An instance created
+// outside the console gets a console record first, so it can be adopted by an
+// administrator. Owner 0 makes it admin-only again.
+func (s *Service) SetOwner(ctx context.Context, name string, ownerID int64) error {
+	if ownerID < 0 {
+		ownerID = 0
+	}
+	if err := s.ensureMetaExists(ctx, name); err != nil {
+		if incus.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	meta, err := s.app.DB.GetInstanceMeta(name)
+	if err != nil {
+		return err
+	}
+	meta.OwnerID = ownerID
+	return s.app.DB.SaveInstanceMeta(meta)
 }
 
 // lookupImageLabel asks Incus for an image's description. It is one API call,

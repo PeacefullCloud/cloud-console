@@ -1,0 +1,57 @@
+{{- /* Standalone web terminal window. Rendered with RenderStandalone, so this
+       file is self-contained and loads no shared layout or partials. Values
+       are exposed as data-* attributes instead of being interpolated into
+       JavaScript, which keeps html/template's escaping in charge. */ -}}
+{{define "console_page"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Instance}} — Web Console · Peaceful Cloud Console</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/css/wterm.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231266d6'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+<script src="/static/js/wterm.js?v=1" defer></script>
+<script src="/static/console.js?v=1" defer></script>
+</head>
+<body class="console-window"
+      data-instance="{{.Instance}}"
+      data-login-user="{{.LoginUser}}"
+      data-ws-path="/instances/{{.Instance}}/console/ws"
+      data-cols="{{.Cols}}"
+      data-rows="{{.Rows}}"
+      data-max-input="{{.MaxInputBytes}}"
+      data-running="{{.Running}}">
+
+<div class="console-shell">
+  <header class="console-bar">
+    <div class="console-title">
+      <span class="console-led" id="term-led"></span>
+      <strong class="mono">{{.Instance}}</strong>
+      <span class="console-sep">/</span>
+      <span>Web Console</span>
+    </div>
+    <div class="console-tools">
+      <span class="console-status" id="term-status" role="status">connecting…</span>
+      <button type="button" class="btn btn-sm" id="term-paste" title="Paste from clipboard (Ctrl+Shift+V, Shift+Insert or right-click)">Paste</button>
+      <button type="button" class="btn btn-sm" id="term-reconnect" title="Start a fresh session">Reconnect</button>
+      <button type="button" class="btn btn-sm" id="term-clear" title="Clear the screen">Clear</button>
+      <button type="button" class="btn btn-sm" id="term-close" title="Close this window">Close</button>
+    </div>
+  </header>
+
+  {{if not .Running}}
+  <div class="console-warn">This instance is stopped. Start it, then choose Reconnect.</div>
+  {{end}}
+
+  <div id="terminal" aria-label="Terminal for {{.Instance}}"></div>
+
+  <footer class="console-foot">
+    <span>Signed in as <strong class="mono">{{.LoginUser}}</strong> · use <code>sudo -i</code> to become root</span>
+    <span class="faint mono" id="term-size">—</span>
+  </footer>
+</div>
+</body>
+</html>
+{{end}}

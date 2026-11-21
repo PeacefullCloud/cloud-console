@@ -9,6 +9,8 @@
 {{define "instance_actions_inner"}}
 {{$inst := .Inst}}
 {{if canWrite .User}}
+<a class="btn btn-outline" href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}"
+   title="Open an interactive terminal in a separate window">Console</a>
 <form method="post" action="/instances/{{$inst.Name}}/delete"
       hx-post="/instances/{{$inst.Name}}/delete" hx-swap="none" hx-disabled-elt="find button"
       hx-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone."

@@ -204,9 +204,9 @@ func (s *Service) markBusy(out []Backup) {
 	}
 }
 
-// All returns every backup the console tracks.
-func (s *Service) All(ctx context.Context) ([]Backup, error) {
-	rows, err := s.app.DB.ListAllBackups()
+// All returns the backups the scope may see.
+func (s *Service) All(ctx context.Context, scope models.Scope) ([]Backup, error) {
+	rows, err := s.app.DB.ListAllBackupsScoped(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func (s *Service) EnqueueCreate(username, instanceName, name string, exportToS3 
 		return nil, err
 	}
 
-	return s.app.Jobs.Enqueue(username, JobCreate, instanceName, string(payload))
+	return s.app.Jobs.Enqueue(s.ownerOf(instanceName), username, JobCreate, instanceName, string(payload))
 }
 
 // EnqueueExport schedules an upload of an existing local archive to S3.
@@ -275,7 +275,7 @@ func (s *Service) EnqueueExport(username, instanceName, name string) (*models.Jo
 	if err != nil {
 		return nil, err
 	}
-	return s.app.Jobs.Enqueue(username, JobExport, instanceName, string(payload))
+	return s.app.Jobs.Enqueue(s.ownerOf(instanceName), username, JobExport, instanceName, string(payload))
 }
 
 // EnqueueRestore schedules a restore that re-creates the instance from a backup.
@@ -288,7 +288,7 @@ func (s *Service) EnqueueRestore(username, instanceName, name string) (*models.J
 	if err != nil {
 		return nil, err
 	}
-	return s.app.Jobs.Enqueue(username, JobRestore, instanceName, string(payload))
+	return s.app.Jobs.Enqueue(s.ownerOf(instanceName), username, JobRestore, instanceName, string(payload))
 }
 
 // Delete removes a backup archive from Incus, local disk and S3, then drops the
@@ -556,6 +556,15 @@ func (s *Service) RegisterJobHandlers() {
 }
 
 // --- helpers --------------------------------------------------------------
+
+// ownerOf returns the tenant an instance belongs to. Instances created outside
+// the console have no record and therefore no owner (admins only).
+func (s *Service) ownerOf(instanceName string) int64 {
+	if meta, err := s.app.DB.GetInstanceMeta(instanceName); err == nil {
+		return meta.OwnerID
+	}
+	return 0
+}
 
 func decode(job *models.Job) (backupPayload, error) {
 	var payload backupPayload

@@ -5,7 +5,9 @@
     <div class="grow">
       <div class="card-title">Custom domains</div>
       <p class="card-sub">
-        Point the domain's DNS A record at this server.
+        Point the domain's DNS at this server's public address
+        {{if .PublicIP}}<span class="mono">{{.PublicIP}}</span>{{else}}(see the Domains page){{end}},
+        not at the private container IP shown below.
         {{if .CaddyEnabled}}Caddy provisions and renews HTTPS certificates automatically.{{else}}Caddy management is disabled — see Settings.{{end}}
       </p>
     </div>

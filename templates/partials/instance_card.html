@@ -25,6 +25,7 @@
         </summary>
         <div class="menu-pop">
           <a href="/instances/{{$inst.Name}}">Open instance</a>
+          {{if canWrite .Role}}<a href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}" title="Open a web terminal in a new window">Console</a>{{end}}
           {{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">Open website</a>{{end}}
           {{if canWrite .Role}}
           <form method="post" action="/instances/{{$inst.Name}}/state"

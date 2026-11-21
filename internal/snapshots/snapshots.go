@@ -76,9 +76,9 @@ func (s *Service) List(instanceName string) ([]Snapshot, error) {
 	return out, nil
 }
 
-// All returns every snapshot the console knows about.
-func (s *Service) All() ([]Snapshot, error) {
-	meta, err := s.app.DB.ListAllSnapshotMeta()
+// All returns the snapshots the scope may see.
+func (s *Service) All(scope models.Scope) ([]Snapshot, error) {
+	meta, err := s.app.DB.ListAllSnapshotMetaScoped(scope)
 	if err != nil {
 		return nil, err
 	}

@@ -32,9 +32,19 @@
     <div class="grow">
       <div class="snap-name" style="font-size:13px">{{.Username}}{{if eq .Username $.User.Username}} <span class="faint">(you)</span>{{end}}</div>
       <div class="snap-meta">{{.Role}} · sign-in: {{authMethod .AuthMethod}}{{if .LastLoginAt}} · last seen {{ago .LastLoginAt}}{{else}} · never signed in{{end}}</div>
+      {{if canAdmin $.User}}
+      <div class="snap-meta">Instances: {{index $.Usage .ID}}{{if gt .MaxInstances 0}} of {{.MaxInstances}}{{else}} · no personal quota{{end}}</div>
+      {{end}}
       {{with index $.Links .ID}}<div class="snap-meta">Single sign-on: {{join . ", "}}</div>{{end}}
       {{if canAdmin $.User}}
       <div class="row-tight" style="margin-top:6px">
+        <form method="post" action="/settings/users/{{.ID}}/quota"
+              hx-post="/settings/users/{{.ID}}/quota" hx-target="#users-list" hx-swap="outerHTML"
+              hx-disabled-elt="find button" class="row-tight" title="Maximum instances this account may own (0 = unlimited)">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <input type="number" name="max_instances" min="0" value="{{.MaxInstances}}" style="width:80px" aria-label="Instance quota for {{.Username}}">
+          <button class="btn btn-sm" type="submit">Quota</button>
+        </form>
         <form method="post" action="/settings/users/{{.ID}}/method"
               hx-post="/settings/users/{{.ID}}/method" hx-target="#users-list" hx-swap="outerHTML"
               hx-disabled-elt="find button" hx-trigger="change from:select" title="Who may use which sign-in">
