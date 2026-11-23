@@ -51,10 +51,12 @@ type dashboardData struct {
 
 type instancesData struct {
 	baseData
-	Instances []instances.Instance
-	Groups    []poolGroup
-	Running   int
-	Stopped   int
+	Instances  []instances.Instance
+	Groups     []poolGroup
+	Running    int
+	Stopped    int
+	VMs        int
+	Containers int
 }
 
 type poolGroup struct {

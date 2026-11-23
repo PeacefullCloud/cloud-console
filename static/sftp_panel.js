@@ -295,17 +295,20 @@
 
   // A small pool gives parallel, multi-threaded transfers without flooding
   // the socket with an unbounded number of files at once.
+  // Returns an array of all settled worker results (one entry per item).
   async function pool(items, limit, worker) {
+    var results = new Array(items.length);
     var index = 0;
     async function run() {
       while (index < items.length) {
-        var item = items[index++];
-        await worker(item);
+        var i = index++;
+        results[i] = await worker(items[i]);
       }
     }
     var runners = [];
     for (var i = 0; i < Math.min(limit, items.length); i++) { runners.push(run()); }
     await Promise.all(runners);
+    return results;
   }
 
   function saveBlob(blob, name) {

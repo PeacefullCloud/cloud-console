@@ -6,7 +6,7 @@
       <div class="card-head">
         <div class="grow">
           <div class="card-title">Manual snapshots</div>
-          <p class="card-sub">A snapshot is a fast local rollback point. It is not a backup — use Backups to export data off-host.</p>
+          <p class="card-sub">A snapshot is a fast local rollback point. It is not a backup — use Backups to export data off-site.</p>
         </div>
       </div>
 
@@ -63,14 +63,10 @@
 
   <div class="split-side">
     <div class="card">
-      <div class="card-head"><div class="grow"><div class="card-title">Scheduling</div></div></div>
-      <p class="muted small">
-        Automatic snapshots are created by an Incus snapshot schedule, not by the console. Create one on the host:
+      <div class="card-head"><div class="grow"><div class="card-title">Automatic snapshots</div></div></div>
+      <p class="muted small" style="margin:0">
+        Snapshots can also be created automatically on a daily schedule. Use manual snapshots whenever you need an immediate rollback point before a change.
       </p>
-      <div class="copy-field">
-        <input type="text" readonly value="incus snapshot schedule create {{$inst.Name}} daily --expiry 7d">
-        <button class="btn btn-sm" type="button" data-copy="incus snapshot schedule create {{$inst.Name}} daily --expiry 7d">Copy</button>
-      </div>
     </div>
   </div>
 </div>

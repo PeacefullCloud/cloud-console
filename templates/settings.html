@@ -4,7 +4,7 @@
   <div class="page-head">
     <div class="grow">
       <h1>Settings</h1>
-      <p class="page-sub">Host, console and security configuration.</p>
+      <p class="page-sub">Workspace and security configuration.</p>
     </div>
   </div>
 
@@ -17,8 +17,8 @@
       <div class="card">
         <div class="card-head">
           <div class="grow">
-            <div class="card-title">Host</div>
-            <p class="card-sub">Read live from the Incus daemon.</p>
+            <div class="card-title">Infrastructure</div>
+            <p class="card-sub">Current capacity for this workspace.</p>
           </div>
         </div>
         <div class="stat-grid" style="margin-bottom:14px">
@@ -37,16 +37,10 @@
             <div class="stat-note">{{.RunningCount}} running</div>
           </div>
         </div>
-        <dl class="kv">
-          <dt>Incus server</dt><dd class="strong">{{.Host.ServerName}} {{if .Host.Version}}<span class="faint">v{{.Host.Version}}</span>{{end}}</dd>
-          <dt>Driver</dt><dd>{{.Host.Driver}}</dd>
-          <dt>Socket</dt><dd class="mono">{{.IncusSocket}}</dd>
-          <dt>Project</dt><dd>{{if .IncusProject}}{{.IncusProject}}{{else}}default{{end}}</dd>
-        </dl>
         {{range .Host.Pools}}
         <div class="mt-16">
           <div class="row mb-8">
-            <span class="small"><strong>{{.Name}}</strong> <span class="faint">{{.Driver}}</span></span>
+            <span class="small"><strong>Storage</strong></span>
             <span class="spacer small muted">{{gb .Used}} / {{gb .Total}}</span>
           </div>
           <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
@@ -74,7 +68,7 @@
         {{else}}
         <p class="muted small">Set these environment variables and restart the console:</p>
         <pre class="mono" style="background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">S3_ENDPOINT=s3.example.com
-S3_BUCKET=incus-backups
+S3_BUCKET=backups
 S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
 S3_REGION=us-east-1
@@ -85,22 +79,12 @@ S3_USE_SSL=true</pre>
       <div class="card">
         <div class="card-head">
           <div class="grow">
-            <div class="card-title">Web routing</div>
-            <p class="card-sub">How the console applies domain changes to the host Caddy.</p>
+            <div class="card-title">Domain routing</div>
+            <p class="card-sub">Public domains and automatic HTTPS for your instances.</p>
           </div>
-          {{if .CaddyEnabled}}<span class="pill pill-ok">managed</span>{{else}}<span class="pill pill-warn">disabled</span>{{end}}
+          {{if .CaddyEnabled}}<span class="pill pill-ok">active</span>{{else}}<span class="pill pill-warn">unavailable</span>{{end}}
         </div>
-        <dl class="kv">
-          <dt>Caddyfile path</dt><dd class="mono">{{if .CaddyPath}}{{.CaddyPath}}{{else}}—{{end}}</dd>
-          <dt>Admin API</dt><dd class="mono">{{if .CaddyAdmin}}{{.CaddyAdmin}}{{else}}—{{end}}</dd>
-          <dt>Reload command</dt><dd class="mono">{{if .CaddyReloadCmd}}{{.CaddyReloadCmd}}{{else}}caddy reload --config &lt;path&gt;{{end}}</dd>
-        </dl>
-        <details class="disclosure">
-          <summary>Preview the generated Caddyfile</summary>
-          <div class="disclosure-body">
-            <pre class="mono" style="max-height:320px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">{{.CaddyPreview}}</pre>
-          </div>
-        </details>
+        <p class="muted small" style="margin:0">Domains added to instances are applied automatically, with certificates issued and renewed for you.</p>
       </div>
       {{end}}
 
@@ -143,7 +127,7 @@ S3_USE_SSL=true</pre>
               <div class="field">
                 <label for="new_quota">Instance quota</label>
                 <input id="new_quota" name="max_instances" type="number" min="0" value="0">
-                <p class="hint">0 means unlimited; the host-wide limit still applies.</p>
+                <p class="hint">0 means unlimited; the workspace limit still applies.</p>
               </div>
               <button class="btn btn-primary btn-block" type="submit">Create user</button>
             </form>

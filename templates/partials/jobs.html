@@ -17,8 +17,8 @@
     {{else}}
     <div class="progress"><span style="width: 100%"></span></div>
     {{end}}
-    {{if .Message}}<div class="job-msg">{{.Message}}</div>{{end}}
-    {{if .Error}}<div class="job-err">{{.Error}}</div>{{end}}
+    {{if .Message}}<div class="job-msg">{{publicDetail .Message}}</div>{{end}}
+    {{if .Error}}<div class="job-err">{{publicDetail .Error}}</div>{{end}}
   </div>
   {{end}}
 </div>

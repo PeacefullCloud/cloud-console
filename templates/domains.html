@@ -5,7 +5,7 @@
     <div class="grow">
       <h1>Domains &amp; DNS</h1>
       <p class="page-sub">
-        {{len .Domains}} domain{{if ne (len .Domains) 1}}s{{end}} routed through the host Caddy with automatic HTTPS.
+        {{len .Domains}} domain{{if ne (len .Domains) 1}}s{{end}} with automatic HTTPS.
       </p>
     </div>
   </div>
@@ -15,9 +15,7 @@
 
   {{if not .CaddyEnabled}}
   <div class="flash flash-warn">
-    The console is not managing Caddy. Set <span class="mono">CADDY_CONFIG_PATH</span> or
-    <span class="mono">CADDY_ADMIN_URL</span> so domains are applied automatically.
-    Domains added here are still recorded.
+    Automatic HTTPS is currently unavailable. Domains added here are still recorded and will activate once routing is restored.
   </div>
   {{end}}
 
@@ -27,7 +25,7 @@
         <div class="card-head">
           <div class="grow">
             <div class="card-title">Domain mappings</div>
-            <p class="card-sub">Each domain is reverse proxied to its instance's private address.</p>
+            <p class="card-sub">Each domain is routed to its instance's private address.</p>
           </div>
         </div>
 
@@ -71,25 +69,15 @@
     <div class="split-side">
       <div class="card">
         <div class="card-head"><div class="grow"><div class="card-title">DNS setup</div></div></div>
-        <p class="muted small">For every domain, create an A record pointing at this server's public address:</p>
+        <p class="muted small">For every domain, create an A record pointing at your public address:</p>
         <dl class="kv">
           <dt>A record</dt>
-          <dd class="mono">example.com → {{if .PublicIP}}{{.PublicIP}}{{else}}&lt;server public IP&gt;{{end}}</dd>
+          <dd class="mono">example.com → {{if .PublicIP}}{{.PublicIP}}{{else}}&lt;your public IP&gt;{{end}}</dd>
           <dt>Optional</dt>
           <dd class="mono">www.example.com → same address</dd>
         </dl>
-        <p class="hint">Caddy requests a certificate as soon as DNS resolves and port 80/443 are reachable.</p>
+        <p class="hint">HTTPS certificates are issued automatically once DNS resolves and ports 80/443 are reachable.</p>
       </div>
-
-      {{if canAdmin .User}}
-      <div class="card">
-        <div class="card-head">
-          <div class="grow"><div class="card-title">Generated Caddyfile</div></div>
-          <button class="btn btn-sm" type="button" data-copy-target="#caddy-preview">Copy</button>
-        </div>
-        <pre id="caddy-preview" class="mono" style="max-height:340px;overflow:auto;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">{{.CaddyPreview}}</pre>
-      </div>
-      {{end}}
     </div>
   </div>
 </div>

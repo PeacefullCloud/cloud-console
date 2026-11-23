@@ -13,7 +13,7 @@
   <span class="pick-body">
     <span class="pick-title">{{.Label}}</span>
     <span class="pick-desc">{{.Description}}</span>
-    <span class="pick-note mono">{{.Alias}}</span>
+    <span class="pick-note mono">Ready to deploy</span>
   </span>
 </label>
 {{else}}
@@ -24,7 +24,7 @@
   <span class="pick-body">
     <span class="pick-title">{{.Label}}</span>
     <span class="pick-desc">{{.Description}}</span>
-    <span class="pick-note mono">{{.Alias}}</span>
+    <span class="pick-note mono">Ready to deploy</span>
   </span>
 </label>
 {{end}}
@@ -32,7 +32,7 @@
 {{if not .Images}}
 <div class="empty" style="grid-column:1/-1">
   <h3>No images in this category</h3>
-  <p>Pick another platform or add images to Incus.</p>
+  <p>Pick another platform or add images to the catalog.</p>
 </div>
 {{end}}
 {{end}}
@@ -42,7 +42,7 @@
   <div class="page-head">
     <div class="grow">
       <h1>Create an instance</h1>
-      <p class="page-sub">Pick an image, choose a plan and give the instance a name. It is created and started on the Incus host.</p>
+      <p class="page-sub">Choose a blueprint, runtime isolation and resource plan to launch your instance.</p>
     </div>
     <div class="page-actions">
       <a class="btn" href="/instances">Cancel</a>
@@ -53,226 +53,248 @@
 
   <form method="post" action="/instances" id="create-form">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="storage_pool" value="{{.Form.StoragePool}}">
 
-    <div class="card">
-      <div class="card-head">
-        <div class="grow">
-          <div class="card-title">1. Pick your instance image</div>
-          <p class="card-sub">The image determines the operating system and whether applications come pre-installed.</p>
-        </div>
-      </div>
+    <div class="wizard-grid">
+      <div class="wizard-main">
 
-      <div class="label">Select a platform</div>
-      <div class="pick-grid mb-24">
-        {{range .Platforms}}
-        <label class="pick">
-          <input type="radio" name="platform" value="{{.ID}}"
-                 {{if eq .ID $.Form.Platform}}checked{{end}}
-                 hx-get="/create/blueprints"
-                 hx-include="[name='platform']"
-                 hx-target="#blueprints"
-                 hx-swap="innerHTML">
-          <span class="dot"></span>
-          <span class="os-icon os-custom">{{platformInitial .ID}}</span>
-          <span class="pick-body">
-            <span class="pick-title">{{.Label}}</span>
-            <span class="pick-desc">{{.Description}}</span>
-            <span class="pick-note">{{.Count}} image{{if ne .Count 1}}s{{end}}</span>
-          </span>
-        </label>
-        {{end}}
-      </div>
-
-      <div class="label">Select a blueprint</div>
-      <div class="pick-grid" id="blueprints">
-        {{template "blueprint_grid" .}}
-      </div>
-
-      <div class="label" style="margin-top:20px">Select instance type</div>
-      <div class="pick-grid" id="instance-types">
-        <label class="pick">
-          <input type="radio" name="kind" value="container"
-                 {{if ne $.Form.Kind "virtual-machine"}}checked{{end}}>
-          <span class="dot"></span>
-          <span class="os-icon os-custom">C</span>
-          <span class="pick-body">
-            <span class="pick-title">Container</span>
-            <span class="pick-desc">Shares the host kernel. Fast to create, dense, ideal for websites and services.</span>
-            <span class="pick-note">~130 MB image · starts in seconds</span>
-          </span>
-        </label>
-        <label class="pick">
-          <input type="radio" name="kind" value="virtual-machine"
-                 {{if eq $.Form.Kind "virtual-machine"}}checked{{end}}>
-          <span class="dot"></span>
-          <span class="os-icon os-custom">V</span>
-          <span class="pick-body">
-            <span class="pick-title">Virtual machine</span>
-            <span class="pick-desc">Full kernel isolation via KVM. For untrusted tenants or kernel-specific needs.</span>
-            <span class="pick-note">Needs 10+ GB disk · slower first boot</span>
-          </span>
-        </label>
-      </div>
-      <p class="hint" id="kind-hint">Application images run as containers only; operating systems run as either type.</p>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <div class="grow">
-          <div class="card-title">2. Choose your instance plan</div>
-          <p class="card-sub">Plans bundle compute, memory and SSD storage. Choose a preset or set your own limits.</p>
-        </div>
-      </div>
-
-      <div class="size-grid">
-        {{$size := .Form.Size}}
-        {{range .Sizes}}
-        <label class="size-card">
-          <input type="radio" name="size" value="{{.Value}}" {{if eq .Value $size}}checked{{end}}>
-          <div class="price">{{.CPU}} vCPU<small>{{gb .MemoryBytes}} RAM · {{.DiskGB}} GB SSD</small></div>
-          <div class="size-name">{{.Label}}</div>
-          <ul>
-            <li><b>{{.CPU}}</b> vCPU</li>
-            <li><b>{{gb .MemoryBytes}}</b> memory</li>
-            <li><b>{{.DiskGB}} GB</b> SSD</li>
-          </ul>
-        </label>
-        {{end}}
-
-        <label class="size-card">
-          <input type="radio" name="size" value="custom" {{if eq $size "custom"}}checked{{end}}>
-          <div class="price">Custom<small>Set your own resources</small></div>
-          <div class="size-name">Advanced</div>
-          <ul>
-            <li><b>1–64</b> vCPU</li>
-            <li><b>128 MB–1 TB</b> memory</li>
-            <li><b>2 GB–10 TB</b> SSD</li>
-          </ul>
-        </label>
-      </div>
-
-      <details class="disclosure" {{if eq $size "custom"}}open{{end}}>
-        <summary>Custom resources</summary>
-        <div class="disclosure-body">
-          <div class="field-row">
-            <div class="field">
-              <label for="cpu">vCPU</label>
-              <input id="cpu" name="cpu" type="number" min="1" max="64" value="{{.Form.CPU}}">
-            </div>
-            <div class="field">
-              <label for="memory_mb">Memory (MB)</label>
-              <input id="memory_mb" name="memory_mb" type="number" min="128" max="1048576" step="128" value="{{.Form.MemoryMB}}">
-            </div>
-            <div class="field">
-              <label for="disk_gb">Disk (GB)</label>
-              <input id="disk_gb" name="disk_gb" type="number" min="2" max="10240" value="{{.Form.DiskGB}}">
+        <div class="card">
+          <div class="step-head">
+            <span class="step-badge">1</span>
+            <div>
+              <div class="step-title">Pick your instance image</div>
+              <p class="step-sub">Choose a clean OS base or a pre-configured application stack.</p>
             </div>
           </div>
-          <p class="hint">These values are only used when the plan is set to <strong>Custom</strong>.</p>
-        </div>
-      </details>
 
-      {{if .Pools}}
-      <div class="field mt-16">
-        <label for="storage_pool">Storage pool</label>
-        <select id="storage_pool" name="storage_pool">
-          {{$pool := .Form.StoragePool}}
-          {{range .Pools}}
-          <option value="{{.Name}}" {{if eq .Name $pool}}selected{{end}}>{{.Name}} ({{.Driver}})</option>
+          <div class="label">Select a platform</div>
+          <div class="pick-grid mb-24">
+            {{range .Platforms}}
+            <label class="pick">
+              <input type="radio" name="platform" value="{{.ID}}"
+                     {{if eq .ID $.Form.Platform}}checked{{end}}
+                     hx-get="/create/blueprints"
+                     hx-include="[name='platform']"
+                     hx-target="#blueprints"
+                     hx-swap="innerHTML">
+              <span class="dot"></span>
+              <span class="os-icon os-custom">{{platformInitial .ID}}</span>
+              <span class="pick-body">
+                <span class="pick-title">{{.Label}}</span>
+                <span class="pick-desc">{{.Description}}</span>
+                <span class="pick-note">{{.Count}} image{{if ne .Count 1}}s{{end}}</span>
+              </span>
+            </label>
+            {{end}}
+          </div>
+
+          <div class="label">Select a blueprint</div>
+          <div class="pick-grid" id="blueprints" aria-live="polite">
+            {{template "blueprint_grid" .}}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step-head">
+            <span class="step-badge">2</span>
+            <div>
+              <div class="step-title">Choose runtime and resources</div>
+              <p class="step-sub">Containers are fast and dense; virtual machines add full kernel isolation.</p>
+            </div>
+          </div>
+
+          <div class="label">Runtime isolation</div>
+          <div class="pick-grid" id="instance-types">
+            <label class="pick">
+              <input type="radio" name="kind" value="container"
+                     {{if ne $.Form.Kind "virtual-machine"}}checked{{end}}>
+              <span class="dot"></span>
+              <span class="os-icon os-custom">C</span>
+              <span class="pick-body">
+                <span class="pick-title">Container</span>
+                <span class="pick-desc">Lightweight and fast. Ideal for websites, APIs and background services.</span>
+                <span class="pick-note">~130 MB image · starts in seconds</span>
+              </span>
+            </label>
+            <label class="pick">
+              <input type="radio" name="kind" value="virtual-machine"
+                     {{if eq $.Form.Kind "virtual-machine"}}checked{{end}}>
+              <span class="dot"></span>
+              <span class="os-icon os-custom">V</span>
+              <span class="pick-body">
+                <span class="pick-title">Virtual machine</span>
+                <span class="pick-desc">Full OS isolation with dedicated kernels. Best for strict separation and custom kernels.</span>
+                <span class="pick-note">More disk · slower first boot</span>
+              </span>
+            </label>
+          </div>
+          <p class="hint" id="kind-hint">Application images run as containers only; operating systems run as either type.</p>
+
+          <div class="label mt-24">Resource plan</div>
+          <div class="size-grid">
+            {{$size := .Form.Size}}
+            {{range .Sizes}}
+            <label class="size-card" data-summary="{{.CPU}} vCPU · {{gb .MemoryBytes}} · {{.DiskGB}} GB">
+              <input type="radio" name="size" value="{{.Value}}" {{if eq .Value $size}}checked{{end}}>
+              <div class="price">{{.CPU}} vCPU<small>{{gb .MemoryBytes}} RAM · {{.DiskGB}} GB SSD</small></div>
+              <div class="size-name">{{.Label}}</div>
+              <ul>
+                <li><b>{{.CPU}}</b> vCPU</li>
+                <li><b>{{gb .MemoryBytes}}</b> memory</li>
+                <li><b>{{.DiskGB}} GB</b> SSD</li>
+              </ul>
+            </label>
+            {{end}}
+
+            <label class="size-card" data-summary="Custom resources">
+              <input type="radio" name="size" value="custom" {{if eq $size "custom"}}checked{{end}}>
+              <div class="price">Custom<small>Set your own resources</small></div>
+              <div class="size-name">Advanced</div>
+              <ul>
+                <li><b>1–64</b> vCPU</li>
+                <li><b>128 MB–1 TB</b> memory</li>
+                <li><b>2 GB–10 TB</b> SSD</li>
+              </ul>
+            </label>
+          </div>
+
+          <details class="disclosure" {{if eq $size "custom"}}open{{end}}>
+            <summary>Custom resources</summary>
+            <div class="disclosure-body">
+              <div class="field-row">
+                <div class="field">
+                  <label for="cpu">vCPU</label>
+                  <input id="cpu" name="cpu" type="number" min="1" max="64" value="{{.Form.CPU}}">
+                </div>
+                <div class="field">
+                  <label for="memory_mb">Memory (MB)</label>
+                  <input id="memory_mb" name="memory_mb" type="number" min="128" max="1048576" step="128" value="{{.Form.MemoryMB}}">
+                </div>
+                <div class="field">
+                  <label for="disk_gb">Disk (GB)</label>
+                  <input id="disk_gb" name="disk_gb" type="number" min="2" max="10240" value="{{.Form.DiskGB}}">
+                </div>
+              </div>
+              <p class="hint">These values are only used when the plan is set to <strong>Custom</strong>.</p>
+            </div>
+          </details>
+
+        </div>
+
+        <div class="card">
+          <div class="step-head">
+            <span class="step-badge">3</span>
+            <div>
+              <div class="step-title">Name, domain and access</div>
+              <p class="step-sub">The instance name is set in the launch summary. Add a domain and SSH credentials here.</p>
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="domain">Domain (optional)</label>
+              <input id="domain" name="domain" type="text" placeholder="example.com" value="{{.Form.Domain}}">
+              <p class="hint">Point this domain's DNS at your public address. HTTPS is enabled automatically.</p>
+            </div>
+            <div class="field">
+              <label for="notes">Notes (optional)</label>
+              <input id="notes" name="notes" type="text" placeholder="Customer site, staging, ..." value="{{.Form.Notes}}">
+            </div>
+          </div>
+
+          {{if canAdmin .User}}
+          <div class="field mt-16">
+            <label for="owner_id">Create on behalf of</label>
+            <select id="owner_id" name="owner_id" hx-get="/create/keys" hx-trigger="change"
+                    hx-target="#ssh-key-select" hx-swap="innerHTML">
+              <option value="">Me ({{.User.Username}})</option>
+              {{range .Owners}}
+              {{if ne .ID $.User.ID}}<option value="{{.ID}}">{{.Username}} ({{.Role}})</option>{{end}}
+              {{end}}
+            </select>
+            <p class="hint">The instance and its history belong to the selected account. Leave as-is to own it yourself. The saved-key list follows this choice.</p>
+          </div>
           {{end}}
-        </select>
-      </div>
-      {{end}}
-    </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div class="grow">
-          <div class="card-title">3. Name your instance</div>
-          <p class="card-sub">Names must be lowercase and DNS-safe. Optionally attach a domain now.</p>
+          <div class="label mt-24">SSH access</div>
+          <p class="card-sub" style="margin-bottom:12px">At least one credential is required. Prefer a saved key: with a key and no password, password login is disabled entirely. Connect as <span class="mono">root@&lt;address&gt;</span>.</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="ssh-key-select">Saved key</label>
+              <select id="ssh-key-select" name="ssh_key_id">
+                {{template "ssh_key_options" .}}
+              </select>
+              <p class="hint">Keys from your own vault, or from the owner selected above. <a href="/ssh-keys">Manage keys</a>.</p>
+            </div>
+            <div class="field">
+              <label for="ssh_key">Paste a public key instead</label>
+              <input id="ssh_key" name="ssh_key" type="text" autocomplete="off" spellcheck="false"
+                     placeholder="ssh-ed25519 AAAA..." value="{{.Form.SSHKey}}">
+              <p class="hint">A saved key above takes priority over this field.</p>
+            </div>
+          </div>
+          <div class="field mt-8">
+            <label for="root_password">Administrator password (optional fallback)</label>
+            <input id="root_password" name="root_password" type="password" minlength="8" autocomplete="new-password"
+                   placeholder="8+ characters" value="{{.Form.RootPassword}}">
+            <p class="hint">Leave empty for key-only access, which is more secure. Set one only if you also want password login. The web console does not need it.</p>
+          </div>
         </div>
+
       </div>
 
-      <div class="field-row">
-        <div class="field">
-          <label for="name">Instance name</label>
-          <input id="name" name="name" type="text" required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
-                 placeholder="my-wordpress-site" value="{{.Form.Name}}">
-          <p class="hint">Lowercase letters, digits and hyphens. Cannot be changed later without a reboot.</p>
+      <aside class="wizard-side">
+        <div class="card summary-card">
+          <div class="card-head">
+            <div class="grow">
+              <div class="card-title">Launch summary</div>
+              <p class="card-sub">Launches with your account's default resources.</p>
+            </div>
+          </div>
+
+          <div class="summary-rows">
+            <div class="summary-row">
+              <span class="summary-label">Blueprint</span>
+              <span class="summary-value" id="summary-blueprint">{{if .Form.Image}}{{.Form.Image}}{{else}}—{{end}}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Runtime</span>
+              <span class="summary-value" id="summary-runtime">{{title .Form.Kind}}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Plan</span>
+              <span class="summary-value" id="summary-plan">{{.Form.CPU}} vCPU · {{.Form.MemoryMB}} MB · {{.Form.DiskGB}} GB</span>
+            </div>
+          </div>
+
+          <div class="field mt-16">
+            <label for="name">Instance name</label>
+            <input id="name" name="name" type="text" required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
+                   placeholder="my-wordpress-site" value="{{.Form.Name}}">
+            <p class="hint">Lowercase letters, digits and hyphens. Cannot be changed later without a reboot.</p>
+          </div>
+
+          <button class="btn btn-primary btn-block mt-16" type="submit">
+            Launch instance
+            <span class="htmx-indicator spinner"></span>
+          </button>
+          <p class="summary-note">Your instance is created, configured and started automatically. Limits can be adjusted later from Settings.</p>
         </div>
-        <div class="field">
-          <label for="domain">Domain (optional)</label>
-          <input id="domain" name="domain" type="text" placeholder="example.com" value="{{.Form.Domain}}">
-          <p class="hint">Point this domain's DNS at the host. HTTPS is issued automatically by Caddy.</p>
+
+        <div class="card">
+          <div class="card-head">
+            <div class="grow"><div class="card-title">What happens next</div></div>
+          </div>
+          <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.9">
+            <li>Your instance is created from the selected blueprint.</li>
+            <li>CPU, memory and disk limits are applied.</li>
+            <li>It starts with a private address and your chosen SSH access.</li>
+            <li>Domains are connected with automatic HTTPS.</li>
+            <li>It appears as <strong>Running</strong> on the Instances page.</li>
+          </ol>
         </div>
-      </div>
-
-      <div class="field">
-        <label for="notes">Notes (optional)</label>
-        <input id="notes" name="notes" type="text" placeholder="Customer site, staging, ..." value="{{.Form.Notes}}">
-      </div>
-
-      {{if canAdmin .User}}
-      <div class="field mt-16">
-        <label for="owner_id">Create on behalf of</label>
-        <select id="owner_id" name="owner_id" hx-get="/create/keys" hx-trigger="change"
-                hx-target="#ssh-key-select" hx-swap="innerHTML">
-          <option value="">Me ({{.User.Username}})</option>
-          {{range .Owners}}
-          {{if ne .ID $.User.ID}}<option value="{{.ID}}">{{.Username}} ({{.Role}})</option>{{end}}
-          {{end}}
-        </select>
-        <p class="hint">The instance and its history belong to the selected account. Leave as-is to own it yourself. The saved-key list follows this choice.</p>
-      </div>
-      {{end}}
-
-      <div class="label" style="margin-top:20px">SSH access</div>
-      <p class="card-sub" style="margin-bottom:12px">At least one credential is required. Prefer a saved key: with a key and no password, password login is disabled entirely. Connect as <span class="mono">root@&lt;private-ip&gt;</span>.</p>
-      <div class="field-row">
-        <div class="field">
-          <label for="ssh-key-select">Saved key</label>
-          <select id="ssh-key-select" name="ssh_key_id">
-            {{template "ssh_key_options" .}}
-          </select>
-          <p class="hint">Keys from your own vault, or from the owner selected above. <a href="/ssh-keys">Manage keys</a>.</p>
-        </div>
-        <div class="field">
-          <label for="ssh_key">Paste a public key instead</label>
-          <input id="ssh_key" name="ssh_key" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="ssh-ed25519 AAAA..." value="{{.Form.SSHKey}}">
-          <p class="hint">A saved key above takes priority over this field.</p>
-        </div>
-      </div>
-      <div class="field mt-8">
-        <label for="root_password">Root password (optional fallback)</label>
-        <input id="root_password" name="root_password" type="password" minlength="8" autocomplete="new-password"
-               placeholder="8+ characters" value="{{.Form.RootPassword}}">
-        <p class="hint">Leave empty for key-only access, which is more secure. Set one only if you also want password login for root. The web console does not need it.</p>
-      </div>
-    </div>
-
-    <div class="btn-row mt-24">
-      <button class="btn btn-primary" type="submit">
-        Create instance
-        <span class="htmx-indicator spinner"></span>
-      </button>
-      <a class="btn" href="/instances">Cancel</a>
+      </aside>
     </div>
   </form>
-
-  <div class="card mt-24">
-    <div class="card-head">
-      <div class="grow">
-        <div class="card-title">What happens next</div>
-      </div>
-    </div>
-    <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.9">
-      <li>The instance is created from the selected image on the Incus host.</li>
-      <li>CPU, memory and root disk limits are applied.</li>
-      <li>The instance is started and gets a private address on the Incus bridge.</li>
-      <li>Caddy is re-rendered so the domain reaches the container with automatic HTTPS.</li>
-      <li>The instance appears as <strong>Running</strong> on the Instances page.</li>
-    </ol>
-  </div>
 </div>
 {{end}}

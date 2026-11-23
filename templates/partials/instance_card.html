@@ -3,81 +3,109 @@
        built with the dict helper because template invocation resets $. */ -}}
 {{define "instance_card"}}
 {{$inst := .Inst}}
-<article class="inst-card" id="inst-card-{{$inst.Name}}">
-  <div class="inst-top">
-    <span class="os-icon {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
-    <div class="inst-body">
-      <a class="inst-name" href="/instances/{{$inst.Name}}">{{$inst.Name}}</a>
-      <div class="inst-spec">{{$inst.CPULabel}} · {{gb $inst.MemoryBytes}} RAM · {{gb $inst.DiskBytes}} SSD</div>
-      <div class="inst-type">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
-        {{if $inst.Tracked}}{{$inst.ImageLabel}}{{else}}{{title $inst.Kind}}{{end}}
-        {{if $inst.Owner}}<span class="faint">· {{$inst.Owner}}</span>{{end}}
+{{$isVM := eq $inst.Kind "virtual-machine"}}
+<article class="inst-card" id="inst-card-{{$inst.Name}}" data-kind="{{if $isVM}}vm{{else}}container{{end}}" data-href="/instances/{{$inst.Name}}">
+  <div class="inst-main">
+    <div class="inst-top">
+      <span class="os-icon {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
+      <div class="inst-body">
+        <div class="row-tight">
+          <a class="inst-name" href="/instances/{{$inst.Name}}">{{$inst.Name}}</a>
+          <span class="kind-badge {{if $isVM}}kind-vm{{else}}kind-container{{end}}" title="{{if $isVM}}Virtual machine{{else}}Container{{end}}">{{if $isVM}}VM{{else}}Container{{end}}</span>
+        </div>
+        <div class="inst-meta">
+          {{if $inst.Tracked}}{{$inst.ImageLabel}}{{else}}{{title $inst.Kind}}{{end}}
+          {{if $inst.Owner}} · <span class="faint">{{$inst.Owner}}</span>{{end}}
+          {{if $inst.PrimaryHost}} · <span class="mono" title="{{$inst.PrimaryHost}}">{{$inst.PrimaryHost}}</span>{{end}}
+        </div>
+      </div>
+      <div class="inst-actions">
+        <details class="menu">
+          <summary class="icon-btn" title="More actions" aria-label="More actions for {{$inst.Name}}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+          </summary>
+          <div class="menu-pop">
+            <a href="/instances/{{$inst.Name}}">Open instance</a>
+            {{if canWrite .Role}}<a href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}" title="Open a web terminal in a new window">Console</a>{{end}}
+            {{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">Open website</a>{{end}}
+            {{if canWrite .Role}}
+            <form method="post" action="/instances/{{$inst.Name}}/state"
+                  hx-post="/instances/{{$inst.Name}}/state"
+                  hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                  hx-disabled-elt="find button">
+              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+              <input type="hidden" name="action" value="restart">
+              <button type="submit">Reboot</button>
+            </form>
+            {{if $inst.Running}}
+            <form method="post" action="/instances/{{$inst.Name}}/state"
+                  hx-post="/instances/{{$inst.Name}}/state"
+                  hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                  hx-disabled-elt="find button">
+              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+              <input type="hidden" name="action" value="stop">
+              <button type="submit">Stop</button>
+            </form>
+            <form method="post" action="/instances/{{$inst.Name}}/state"
+                  hx-post="/instances/{{$inst.Name}}/state"
+                  hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                  hx-disabled-elt="find button"
+                  hx-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data."
+                  data-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data.">
+              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+              <input type="hidden" name="action" value="force-stop">
+              <button type="submit" class="menu-danger">Force stop</button>
+            </form>
+            {{else}}
+            <form method="post" action="/instances/{{$inst.Name}}/state"
+                  hx-post="/instances/{{$inst.Name}}/state"
+                  hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
+                  hx-disabled-elt="find button">
+              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+              <input type="hidden" name="action" value="start">
+              <button type="submit">Start</button>
+            </form>
+            {{end}}
+            {{end}}
+            <a href="/instances/{{$inst.Name}}?tab=snapshots">Manage snapshots</a>
+          </div>
+        </details>
       </div>
     </div>
-    <div class="inst-actions">
-      <button class="icon-btn" type="button" title="Copy instance name" data-copy="{{$inst.Name}}">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-      </button>
-      <details class="menu">
-        <summary class="icon-btn" title="More actions">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
-        </summary>
-        <div class="menu-pop">
-          <a href="/instances/{{$inst.Name}}">Open instance</a>
-          {{if canWrite .Role}}<a href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}" title="Open a web terminal in a new window">Console</a>{{end}}
-          {{if $inst.PrimaryHost}}<a href="https://{{$inst.PrimaryHost}}" target="_blank" rel="noreferrer noopener">Open website</a>{{end}}
-          {{if canWrite .Role}}
-          <form method="post" action="/instances/{{$inst.Name}}/state"
-                hx-post="/instances/{{$inst.Name}}/state"
-                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
-                hx-disabled-elt="find button">
-            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-            <input type="hidden" name="action" value="restart">
-            <button type="submit">Reboot</button>
-          </form>
-          {{if $inst.Running}}
-          <form method="post" action="/instances/{{$inst.Name}}/state"
-                hx-post="/instances/{{$inst.Name}}/state"
-                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
-                hx-disabled-elt="find button">
-            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-            <input type="hidden" name="action" value="stop">
-            <button type="submit">Stop</button>
-          </form>
-          <form method="post" action="/instances/{{$inst.Name}}/state"
-                hx-post="/instances/{{$inst.Name}}/state"
-                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
-                hx-disabled-elt="find button"
-                hx-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data."
-                data-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data.">
-            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-            <input type="hidden" name="action" value="force-stop">
-            <button type="submit">Force stop</button>
-          </form>
-          {{else}}
-          <form method="post" action="/instances/{{$inst.Name}}/state"
-                hx-post="/instances/{{$inst.Name}}/state"
-                hx-target="#inst-card-{{$inst.Name}}" hx-swap="outerHTML"
-                hx-disabled-elt="find button">
-            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-            <input type="hidden" name="action" value="start">
-            <button type="submit">Start</button>
-          </form>
-          {{end}}
-          {{end}}
-          <a href="/instances/{{$inst.Name}}?tab=snapshots">Manage snapshots</a>
-        </div>
-      </details>
+
+    <div class="inst-specs">
+      <div class="inst-spec">
+        <div class="inst-spec-label">Compute</div>
+        <div class="inst-spec-value">{{$inst.CPULabel}}</div>
+      </div>
+      <div class="inst-spec">
+        <div class="inst-spec-label">Memory</div>
+        <div class="inst-spec-value">{{gb $inst.MemoryBytes}} RAM</div>
+      </div>
+      <div class="inst-spec">
+        <div class="inst-spec-label">Storage</div>
+        <div class="inst-spec-value">{{gb $inst.DiskBytes}} SSD</div>
+      </div>
     </div>
   </div>
 
   <div class="inst-foot">
     <span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span>
-    <span class="spacer"></span>
-    <span class="inst-addr">
-      {{if $inst.IP}}{{$inst.IP}}{{else}}<span class="faint">no address</span>{{end}}{{if $inst.PrimaryHost}}<br><span class="inst-domain">{{$inst.PrimaryHost}}</span>{{end}}
-    </span>
+    <div class="inst-actions-row">
+      {{if $inst.IP}}
+      <button class="btn btn-sm mono" type="button" data-copy="{{$inst.IP}}" title="Copy address">
+        {{$inst.IP}}
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      </button>
+      {{else}}
+      <span class="faint small">no address</span>
+      {{end}}
+      {{if canWrite .Role}}
+      <a class="btn btn-sm" href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}" title="Open web console" aria-label="Open web console for {{$inst.Name}}">
+        <span class="mono">&gt;_</span>
+      </a>
+      {{end}}
+    </div>
   </div>
 </article>
 {{end}}

@@ -24,7 +24,7 @@
   {{template "read_only_note" .}}
   {{end}}
   {{if not .S3Enabled}}
-  <p class="hint mt-8">Configure an S3-compatible target in <a href="/settings">Settings</a> to export backups off-host.</p>
+  <p class="hint mt-8">Configure an S3-compatible target in <a href="/settings">Settings</a> to export backups off-site.</p>
   {{end}}
 
   {{if .Backups}}
@@ -45,7 +45,7 @@
         <tr>
           <td>
             <div class="snap-name">{{.Name}}</div>
-            {{if .Error}}<div class="snap-meta" style="color:var(--red)">{{.Error}}</div>{{end}}
+            {{if .Error}}<div class="snap-meta" style="color:var(--red)">{{publicDetail .Error}}</div>{{end}}
           </td>
           <td class="muted nowrap">{{date .CreatedAt}}{{if .CreatedBy}} <span class="faint">· {{.CreatedBy}}</span>{{end}}</td>
           <td>
@@ -58,7 +58,7 @@
             <div class="row-tight">
               {{if .LocalExists}}<span class="pill pill-ok" title="{{.LocalPath}}">local</span>{{end}}
               {{if .InS3}}<span class="pill pill-info" title="{{.S3Key}}">s3</span>{{end}}
-              {{if .InIncus}}<span class="pill pill-warn" title="Still inside Incus">incus</span>{{end}}
+              {{if .InIncus}}<span class="pill pill-warn" title="Stored on the platform">platform</span>{{end}}
             </div>
           </td>
           <td class="num">{{bytes .SizeBytes}}</td>

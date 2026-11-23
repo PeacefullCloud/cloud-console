@@ -555,7 +555,7 @@ func TestNetworkingHostDetailsAreAdminOnly(t *testing.T) {
 	if !strings.Contains(out, `class="num"`) || !strings.Contains(out, ">7<") {
 		t.Error("the administrator cannot see network usage counts")
 	}
-	if !strings.Contains(out, "/etc/caddy/Caddyfile") {
-		t.Error("the administrator cannot see host Caddy details")
+	if strings.Contains(out, "/etc/caddy/Caddyfile") || strings.Contains(out, "Config path") {
+		t.Error("host routing details must never be rendered")
 	}
 }

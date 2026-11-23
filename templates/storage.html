@@ -4,36 +4,36 @@
   <div class="page-head">
     <div class="grow">
       <h1>Storage</h1>
-      <p class="page-sub">{{len .Host.Pools}} storage pool{{if ne (len .Host.Pools) 1}}s{{end}} on {{.Host.ServerName}}.</p>
+      <p class="page-sub">{{len .Host.Pools}} storage area{{if ne (len .Host.Pools) 1}}s{{end}} available to your account.</p>
     </div>
   </div>
 
   {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 
   {{if .Host.Pools}}
-    {{range .Host.Pools}}
+    {{range $pool := .Host.Pools}}
     <div class="card">
       <div class="card-head">
         <div class="grow">
-          <div class="card-title">{{.Name}}</div>
-          <p class="card-sub">Driver: {{.Driver}} · {{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</p>
+          <div class="card-title">Storage area</div>
+          <p class="card-sub">{{len $pool.Instances}} instance{{if ne (len $pool.Instances) 1}}s{{end}}</p>
         </div>
-        <span class="pill pill-info">{{gb .Used}} / {{gb .Total}}</span>
+        <span class="pill pill-info">{{gb $pool.Used}} / {{gb $pool.Total}}</span>
       </div>
 
-      <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
-      <p class="hint">{{pct (poolPercent .Used .Total)}}% used · {{bytes .Free}} free</p>
+      <div class="progress {{usageClass (poolPercent $pool.Used $pool.Total)}}"><span style="width: {{pct (poolPercent $pool.Used $pool.Total)}}%"></span></div>
+      <p class="hint">{{pct (poolPercent $pool.Used $pool.Total)}}% used · {{bytes $pool.Free}} free</p>
 
-      {{if .Instances}}
+      {{if $pool.Instances}}
       <div class="table-wrap mt-16">
         <table class="table">
-          <thead><tr><th>Instance</th><th>Status</th><th class="num">Root disk</th><th class="num">Used</th><th class="tight"></th></tr></thead>
+          <thead><tr><th>Instance</th><th>Status</th><th class="num">Disk</th><th class="num">Used</th><th class="tight"></th></tr></thead>
           <tbody>
-            {{range .Instances}}
+            {{range $pool.Instances}}
             <tr>
               <td><a href="/instances/{{.Name}}">{{.Name}}</a></td>
               <td><span class="status {{statusClass .Status}}">{{.Status}}</span></td>
-              <td class="num">{{if .DiskBytes}}{{gb .DiskBytes}}{{else}}pool default{{end}}</td>
+              <td class="num">{{if .DiskBytes}}{{gb .DiskBytes}}{{else}}Default{{end}}</td>
               <td class="num muted">{{gb .DiskUsed}}</td>
               <td><a class="btn btn-sm" href="/instances/{{.Name}}?tab=storage">Manage</a></td>
             </tr>
@@ -42,24 +42,15 @@
         </table>
       </div>
       {{else}}
-      <p class="muted small mt-16" style="margin-bottom:0">No instances use this pool yet.</p>
+      <p class="muted small mt-16" style="margin-bottom:0">No instances use this storage area yet.</p>
       {{end}}
     </div>
     {{end}}
   {{else}}
     <div class="empty">
-      <h3>No storage pools found</h3>
-      <p>Create a pool with <span class="mono">incus storage create</span> and reload this page.</p>
+      <h3>No storage areas found</h3>
+      <p>Storage is provisioned automatically when you launch your first instance.</p>
     </div>
   {{end}}
-
-  <div class="card mt-24">
-    <div class="card-head"><div class="grow"><div class="card-title">Create a pool</div></div></div>
-    <p class="muted small">The plan targets ZFS on a single physical server:</p>
-    <div class="copy-field">
-      <input type="text" readonly value="incus storage create default zfs size=1TiB">
-      <button class="btn btn-sm" type="button" data-copy="incus storage create default zfs size=1TiB">Copy</button>
-    </div>
-  </div>
 </div>
 {{end}}

@@ -212,6 +212,7 @@ func (r *Renderer) funcMap() template.FuncMap {
 		"greeting":        greeting,
 		"dict":            dict,
 		"safeURL":         func(s string) template.URL { return template.URL(s) },
+		"publicDetail":    publicDetail,
 		// canWrite/canAdmin gate mutating UI by role. They accept a
 		// *models.User, a role string, or anything else (unknown and
 		// missing values deny access, so viewers never see admin UI).
@@ -481,6 +482,60 @@ func humanAgo(t time.Time) string {
 	default:
 		return humanDate(t)
 	}
+}
+
+// publicDetail keeps stored job/activity error strings from leaking
+// infrastructure paths, config names or stack identifiers into tenant-facing
+// pages. Any detail that looks like a raw internal error is replaced with a
+// friendly, non-actionable message.
+func publicDetail(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	lower := strings.ToLower(s)
+	internal := []string{
+		"incus", "caddy", "qemu", "caddyfile", "config_file", "adapter",
+		"/etc/", "/home/", "/var/", "/tmp/", "unix.socket", "logger",
+		"pid=", "exit status", "permission denied",
+	}
+	for _, token := range internal {
+		if strings.Contains(lower, token) {
+			return "The operation could not be completed. Contact support if it keeps happening."
+		}
+	}
+
+	runes := []rune(s)
+	if len(runes) > 160 {
+		return string(runes[:157]) + "…"
+	}
+	return s
+}
+
+// publicConsoleLines drops boot-time lines that expose virtualization
+// internals. The remaining output is the instance's own console activity.
+func publicConsoleLines(lines []string) []string {
+	internal := []string{
+		"qemu", "incus", "caddy", "btrfs", "kvm", "pciroot", "scsi(",
+		"bdsdxe", "/etc/", "/home/", "/var/lib",
+	}
+
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		skip := false
+		for _, token := range internal {
+			if strings.Contains(lower, token) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 func humanDuration(d time.Duration) string {

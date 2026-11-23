@@ -80,12 +80,23 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 
 	running, stopped := instances.CountByStatus(list)
 
+	vms, containers := 0, 0
+	for _, inst := range list {
+		if inst.Kind == instances.KindVM {
+			vms++
+		} else {
+			containers++
+		}
+	}
+
 	data := instancesData{
-		baseData:  s.withJobs(s.newBase(w, r, "instances", "Instances"), r),
-		Instances: list,
-		Groups:    s.groupByPool(list),
-		Running:   running,
-		Stopped:   stopped,
+		baseData:   s.withJobs(s.newBase(w, r, "instances", "Instances"), r),
+		Instances:  list,
+		Groups:     s.groupByPool(list),
+		Running:    running,
+		Stopped:    stopped,
+		VMs:        vms,
+		Containers: containers,
 	}
 	data.InstanceCount = len(list)
 
@@ -260,7 +271,7 @@ func platformInfos(catalog []incus.Image) []platformInfo {
 	return []platformInfo{
 		{
 			ID: "apps", Label: "Linux apps", Count: appCount,
-			Description: "Pre-configured applications such as WordPress with Caddy, PHP-FPM and MariaDB.",
+			Description: "Pre-configured application stacks with a web server, runtime and database.",
 		},
 		{
 			ID: "os", Label: "Linux operating system", Count: osCount,
@@ -495,6 +506,7 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 
 	if tab == "overview" {
 		data.ConsoleLog, data.ConsoleLogErr = s.consoleTail(name, 40)
+		data.ConsoleLog = publicConsoleLines(data.ConsoleLog)
 	}
 
 	if tab == "networking" {

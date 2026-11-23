@@ -87,7 +87,7 @@ func DefaultCatalog() []Image {
 		},
 		{
 			ID: "wordpress", Label: "WordPress", Category: "app", Kind: "container",
-			Description: "Prepared image with Caddy, PHP-FPM, WordPress and MariaDB. Build it locally first.",
+			Description: "Prepared application stack with a web server, PHP and MariaDB. Build it locally first.",
 			Alias:       "wordpress-php8.3", Icon: "wordpress", Group: "Applications",
 			PackageManager: "apt", SSHUnit: "ssh",
 		},

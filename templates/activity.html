@@ -32,7 +32,7 @@
               {{else if eq .Status "running"}}<span class="pill pill-info">running</span>
               {{else}}<span class="pill">{{.Status}}</span>{{end}}
             </td>
-            <td class="muted small">{{if .Error}}{{.Error}}{{else}}{{.Message}}{{end}}</td>
+            <td class="muted small">{{if .Error}}{{publicDetail .Error}}{{else}}{{publicDetail .Message}}{{end}}</td>
             <td class="muted">{{.CreatedBy}}</td>
             <td class="num muted nowrap">{{datetime .CreatedAt}}</td>
           </tr>
@@ -59,7 +59,7 @@
           <tr>
             <td><strong>{{.Action}}</strong></td>
             <td>{{if .Target}}{{.Target}}{{else}}<span class="faint">—</span>{{end}}</td>
-            <td class="muted small">{{if .Detail}}{{.Detail}}{{else}}—{{end}}</td>
+            <td class="muted small">{{if .Detail}}{{publicDetail .Detail}}{{else}}—{{end}}</td>
             <td class="muted">{{.Username}}</td>
             <td><span class="pill {{if eq .Status "ok"}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span></td>
             <td class="num muted nowrap">{{datetime .TS}}</td>

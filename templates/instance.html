@@ -1,15 +1,29 @@
 {{define "title"}}{{.Inst.Name}}{{end}}
 {{define "content"}}
 {{$inst := .Inst}}
+{{$isVM := eq $inst.Kind "virtual-machine"}}
 <div class="wrap">
 
-  <div class="page-head">
+  <div class="detail-head">
     <div class="grow">
-      <h1>{{$inst.Name}}</h1>
-      <p class="page-sub">
-        {{$inst.CPULabel}} · {{gb $inst.MemoryBytes}} RAM · {{gb $inst.DiskBytes}} SSD
-        {{if $inst.Tracked}} · {{$inst.ImageLabel}}{{end}}
-        {{if $inst.StoragePool}} · <a href="/storage">{{$inst.StoragePool}}</a>{{end}}
+      <div class="breadcrumb">
+        <a href="/instances">Instances</a>
+        <span class="sep">/</span>
+        <span class="current">{{$inst.Name}}</span>
+      </div>
+      <div class="title-row">
+        <h1>{{$inst.Name}}</h1>
+        <span class="status-pill {{statusClass $inst.Status}}">{{$inst.Status}}</span>
+        <span class="pill pill-info">{{if $isVM}}Virtual machine{{else}}Container{{end}}</span>
+      </div>
+      <p class="detail-sub">
+        <span>{{$inst.CPULabel}}</span>
+        <span>·</span>
+        <span>{{gb $inst.MemoryBytes}} RAM</span>
+        <span>·</span>
+        <span>{{gb $inst.DiskBytes}} SSD</span>
+        {{if $inst.Tracked}}<span>·</span><span>{{$inst.ImageLabel}}</span>{{end}}
+        {{if $inst.PrimaryHost}}<span>·</span><span class="mono">{{$inst.PrimaryHost}}</span>{{end}}
       </p>
     </div>
     {{template "instance_actions" .}}

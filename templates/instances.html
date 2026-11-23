@@ -6,12 +6,22 @@
     <div class="grow">
       <h1>Instances</h1>
       <p class="page-sub">
-        {{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}} · {{.Running}} running · {{.Stopped}} stopped
-        {{if .Query}}· filtered by “{{.Query}}”{{end}}
+        <span>{{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</span>
+        <span class="dot-sep">•</span>
+        <span class="meta-stat"><span class="meta-dot"></span>{{.Running}} running</span>
+        <span class="dot-sep">•</span>
+        <span class="meta-stat"><span class="meta-dot idle"></span>{{.Stopped}} stopped</span>
+        {{if .Query}}
+        <span class="dot-sep">•</span>
+        <span>Filtered by “{{.Query}}”</span>
+        {{end}}
       </p>
     </div>
     <div class="page-actions">
-      {{if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
+      {{if canWrite .User}}<a class="btn btn-primary" href="/create">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Create instance
+      </a>{{end}}
     </div>
   </div>
 
@@ -20,35 +30,51 @@
 
   {{template "job_list" .}}
 
-  <div class="row-wrap mb-16" style="margin-top:18px">
-    <form method="get" action="/instances" class="row-tight">
-      <span class="small muted">Filter</span>
-      <input type="search" name="q" value="{{.Query}}" placeholder="Name, image or domain" style="width:240px">
-      <button class="btn btn-sm" type="submit">Apply</button>
-      {{if .Query}}<a class="btn-link" href="/instances">Clear</a>{{end}}
-    </form>
-    <span class="spacer"></span>
-    <span class="small muted nowrap">Sorted by storage pool, then name</span>
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <span class="small muted">Show</span>
+      <div class="segmented" role="group" aria-label="Filter by instance type">
+        <button type="button" class="active" data-instance-filter="all" aria-pressed="true">All ({{len .Instances}})</button>
+        <button type="button" data-instance-filter="vm" aria-pressed="false">VMs ({{.VMs}})</button>
+        <button type="button" data-instance-filter="container" aria-pressed="false">Containers ({{.Containers}})</button>
+      </div>
+      {{if .Query}}<a class="btn btn-sm" href="/instances">Clear filter</a>{{end}}
+    </div>
+    <span class="toolbar-meta">Sorted by name</span>
   </div>
 
   {{if .Instances}}
-    {{range .Groups}}
-    <section class="pool-group">
+    <section class="pool-group" data-pool-group>
       <div class="pool-head">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
-        {{if .Name}}{{.Name}}{{else}}Unassigned{{end}}
-        {{if .Driver}}<span class="pool-chip">{{.Driver}}</span>{{end}}
+        <span class="pool-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
+        </span>
+        <span class="pool-name">Your instances</span>
+        <span class="pool-sub" data-total="{{len .Instances}}">{{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</span>
       </div>
-      <div class="pool-sub">{{len .Instances}} instance{{if ne (len .Instances) 1}}s{{end}}</div>
+
       <div class="inst-grid">
         {{range .Instances}}{{template "instance_card" (dict "Inst" . "CSRF" $.CSRF "Role" $.User.Role)}}{{end}}
+        {{if canWrite .User}}
+        <a class="ghost-card" href="/create">
+          <span class="ghost-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </span>
+          <span>Launch a new VM or container</span>
+        </a>
+        {{end}}
       </div>
     </section>
-    {{end}}
+
+    <div class="empty hidden" id="instance-filter-empty">
+      <h3>No instances match this filter</h3>
+      <p>Try another instance type, or show everything again.</p>
+      <button class="btn" type="button" data-instance-filter="all">Show all instances</button>
+    </div>
   {{else}}
     <div class="empty">
       <h3>{{if .Query}}No instances match “{{.Query}}”{{else}}No instances yet{{end}}</h3>
-      <p>{{if .Query}}Try a different name, image or domain.{{else}}Create your first Incus instance to get started.{{end}}</p>
+      <p>{{if .Query}}Try a different name, image or domain.{{else}}Create your first instance to get started.{{end}}</p>
       {{if .Query}}<a class="btn" href="/instances">Clear filter</a>{{else if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
     </div>
   {{end}}

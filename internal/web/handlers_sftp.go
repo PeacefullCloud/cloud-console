@@ -828,6 +828,7 @@ func (s *Server) streamDownload(conn *sftpConn, sess *sftpSession, id uint64, f 
 	defer finished()
 
 	buf := make([]byte, sftpMaxChunk)
+	failed := false
 	for offset := int64(0); offset < size; {
 		select {
 		case <-conn.done:
@@ -843,17 +844,23 @@ func (s *Server) streamDownload(conn *sftpConn, sess *sftpSession, id uint64, f 
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
+				failed = true
 				_ = conn.send(sftpMessage{ID: id, Op: "download_error", OK: false, Error: friendlySFTPError(err)})
 			}
 			break
 		}
 		if n == 0 {
 			// A short read that makes no progress would spin forever.
+			failed = true
 			_ = conn.send(sftpMessage{ID: id, Op: "download_error", OK: false, Error: "file read made no progress"})
 			break
 		}
 	}
-	_ = conn.send(sftpMessage{ID: id, Op: "download_done", OK: true, Size: size})
+	// Only send completion if no error was already sent; sending download_done
+	// after download_error would cause the client to try to save a broken file.
+	if !failed {
+		_ = conn.send(sftpMessage{ID: id, Op: "download_done", OK: true, Size: size})
+	}
 }
 
 func (sess *sftpSession) copyRecursive(src, dst string) error {

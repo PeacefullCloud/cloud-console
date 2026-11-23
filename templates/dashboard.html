@@ -6,9 +6,11 @@
     <div class="grow">
       <h1>{{greeting}}</h1>
       <p class="page-sub">
-        {{.Totals.Instances}} instance{{if ne .Totals.Instances 1}}s{{end}} on this server
-        · {{.Totals.Running}} running
-        · {{.Totals.Domains}} domain{{if ne .Totals.Domains 1}}s{{end}}
+        <span>{{.Totals.Instances}} instance{{if ne .Totals.Instances 1}}s{{end}} on this server</span>
+        <span class="dot-sep">•</span>
+        <span class="meta-stat"><span class="meta-dot"></span>{{.Totals.Running}} running</span>
+        <span class="dot-sep">•</span>
+        <span>{{.Totals.Domains}} domain{{if ne .Totals.Domains 1}}s{{end}}</span>
       </p>
     </div>
     <div class="page-actions">
@@ -35,17 +37,17 @@
     <div class="stat">
       <div class="stat-label">vCPUs allocated</div>
       <div class="stat-value">{{.Totals.VCPUs}}</div>
-      <div class="stat-note">of {{.Host.CPUTotal}} on the host</div>
+      <div class="stat-note">of {{.Host.CPUTotal}} total capacity</div>
     </div>
     <div class="stat">
       <div class="stat-label">Memory allocated</div>
       <div class="stat-value">{{gb .Totals.MemoryBytes}}</div>
-      <div class="stat-note">of {{gb .Host.MemoryTotal}} installed</div>
+      <div class="stat-note">of {{gb .Host.MemoryTotal}} total</div>
     </div>
     <div class="stat">
       <div class="stat-label">Disk allocated</div>
       <div class="stat-value">{{gb .Totals.DiskBytes}}</div>
-      <div class="stat-note">across {{len .Host.Pools}} storage pool{{if ne (len .Host.Pools) 1}}s{{end}}</div>
+      <div class="stat-note">across {{len .Host.Pools}} storage area{{if ne (len .Host.Pools) 1}}s{{end}}</div>
     </div>
     <div class="stat">
       <div class="stat-label">Snapshots</div>
@@ -65,7 +67,7 @@
         <div class="card-head">
           <div class="grow">
             <div class="card-title">Instances</div>
-            <p class="card-sub">Everything Incus is running on this host.</p>
+            <p class="card-sub">Everything running on your account.</p>
           </div>
           <a class="btn-link" href="/instances">View all</a>
         </div>
@@ -88,7 +90,7 @@
         {{else}}
           <div class="empty">
             <h3>No instances yet</h3>
-            <p>Create your first Incus instance to get started.</p>
+            <p>Create your first instance to get started.</p>
             {{if canWrite .User}}<a class="btn btn-primary" href="/create">Create instance</a>{{end}}
           </div>
         {{end}}
@@ -96,38 +98,6 @@
     </div>
 
     <div class="split-side">
-      <div class="card">
-        <div class="card-head">
-          <div class="grow"><div class="card-title">Host</div></div>
-        </div>
-        <dl class="kv">
-          <dt>Incus server</dt>
-          <dd class="strong">{{.Host.ServerName}}{{if .Host.Version}} <span class="faint">v{{.Host.Version}}</span>{{end}}</dd>
-          <dt>Driver</dt>
-          <dd>{{.Host.Driver}}</dd>
-          <dt>Socket</dt>
-          <dd class="mono">{{.IncusSocket}}</dd>
-        </dl>
-
-        <div class="mt-16">
-          <div class="row mb-8">
-            <span class="small"><strong>Memory in use</strong></span>
-            <span class="spacer small muted">{{gb .Host.MemoryUsed}} / {{gb .Host.MemoryTotal}}</span>
-          </div>
-          <div class="progress {{usageClass .Host.UsagePercent}}"><span style="width: {{pct .Host.UsagePercent}}%"></span></div>
-        </div>
-
-        {{range .Host.Pools}}
-        <div class="mt-16">
-          <div class="row mb-8">
-            <span class="small"><strong>{{.Name}}</strong> <span class="faint">{{.Driver}}</span></span>
-            <span class="spacer small muted">{{gb .Used}} / {{gb .Total}}</span>
-          </div>
-          <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
-        </div>
-        {{end}}
-      </div>
-
       <div class="card">
         <div class="card-head">
           <div class="grow"><div class="card-title">Recent activity</div></div>

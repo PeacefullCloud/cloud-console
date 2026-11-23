@@ -33,6 +33,39 @@
     }
   });
 
+  // Whole instance cards are click targets. Interactive children (links,
+  // buttons, menus and form controls) keep their own behaviour.
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0) {
+      return;
+    }
+    var card = event.target.closest("[data-href]");
+    if (!card) {
+      return;
+    }
+    if (event.target.closest("a, button, summary, form, input, select, textarea, label, details")) {
+      return;
+    }
+    window.location.href = card.getAttribute("data-href");
+  });
+
+  // ⌘K / Ctrl+K focuses the global search field.
+  document.addEventListener("keydown", function (event) {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) {
+      return;
+    }
+    if (event.key.toLowerCase() !== "k") {
+      return;
+    }
+    var input = document.getElementById("global-search");
+    if (!input) {
+      return;
+    }
+    event.preventDefault();
+    input.focus();
+    input.select();
+  });
+
   document.addEventListener("htmx:afterRequest", function (event) {
     var form = event.target;
     if (form && form.matches && form.matches("form[data-reset-after-request]")) {
@@ -49,7 +82,7 @@
         // Narrow overlay uses .open; wide layout collapses via body class
         // (desktop .sidebar.open has no rule, which is why the button
         // previously appeared to do nothing).
-        if (window.matchMedia("(max-width: 860px)").matches) {
+        if (window.matchMedia("(max-width: 1024px)").matches) {
           sidebar.classList.toggle("open");
           toggle.setAttribute("aria-expanded", sidebar.classList.contains("open") ? "true" : "false");
         } else {
@@ -61,7 +94,7 @@
     }
 
     // Clicking outside the overlay dismisses it on narrow screens.
-    if (window.matchMedia("(max-width: 860px)").matches) {
+    if (window.matchMedia("(max-width: 1024px)").matches) {
       var openSidebar = document.getElementById("sidebar");
       if (openSidebar && openSidebar.classList.contains("open") &&
           !event.target.closest("#sidebar") && !event.target.closest("#sidebar-toggle")) {
@@ -81,9 +114,9 @@
         return;
       }
       var done = function () {
-        var original = copyBtn.textContent;
+        var original = copyBtn.innerHTML;
         copyBtn.textContent = "Copied";
-        setTimeout(function () { copyBtn.textContent = original; }, 1400);
+        setTimeout(function () { copyBtn.innerHTML = original; }, 1400);
       };
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(done, function () {});
@@ -129,6 +162,53 @@
       });
     }
   });
+
+  // Client-side instance type filter (All / VMs / Containers). The server
+  // still renders every card; this only hides cards and empty pool groups.
+  var instanceFilter = "all";
+  function applyInstanceFilter(filter) {
+    instanceFilter = filter || "all";
+    document.querySelectorAll("[data-instance-filter]").forEach(function (button) {
+      var active = button.getAttribute("data-instance-filter") === instanceFilter;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    var visibleTotal = 0;
+    document.querySelectorAll("[data-pool-group]").forEach(function (group) {
+      var visible = 0;
+      group.querySelectorAll(".inst-card[data-kind]").forEach(function (card) {
+        var show = instanceFilter === "all" || card.getAttribute("data-kind") === instanceFilter;
+        card.hidden = !show;
+        if (show) {
+          visible++;
+        }
+      });
+
+      var count = group.querySelector(".pool-sub");
+      if (count) {
+        count.textContent = visible + " instance" + (visible === 1 ? "" : "s");
+      }
+      group.hidden = visible === 0;
+      visibleTotal += visible;
+    });
+
+    var empty = document.getElementById("instance-filter-empty");
+    if (empty) {
+      empty.classList.toggle("hidden", visibleTotal !== 0 || !document.querySelector("[data-pool-group]"));
+    }
+  }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-instance-filter]");
+    if (!button) {
+      return;
+    }
+    event.preventDefault();
+    applyInstanceFilter(button.getAttribute("data-instance-filter"));
+  });
+
+  applyInstanceFilter("all");
 
   // Destructive actions ask for confirmation. Forms submitted via HTMX carry
   // hx-confirm so HTMX prompts instead — confirming twice would be worse.
@@ -181,6 +261,15 @@
     var target = event.detail && event.detail.target;
     if (target && target.id === "job-tracker") {
       noteTrackerState(!!target.querySelector(".job"));
+    }
+    // A lifecycle response swaps an instance card in place; keep the
+    // type filter and its empty state accurate.
+    if (document.querySelector("[data-pool-group]")) {
+      applyInstanceFilter(instanceFilter);
+    }
+    // The blueprint grid is replaced when the platform changes.
+    if (target && target.id === "blueprints") {
+      syncCreateSummary();
     }
   });
 
@@ -383,6 +472,56 @@
     }
   }
 
+  // Keep the sticky launch summary in sync with the wizard selections.
+  function summaryText(id, text) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.textContent = text;
+    }
+  }
+
+  function syncCreateSummary() {
+    var form = document.getElementById("create-form");
+    if (!form) {
+      return;
+    }
+
+    var image = form.querySelector('input[name="image"]:checked');
+    var blueprint = "—";
+    if (image) {
+      var imagePick = image.closest(".pick");
+      var imageTitle = imagePick && imagePick.querySelector(".pick-title");
+      blueprint = imageTitle ? imageTitle.textContent.trim() : image.value;
+    }
+    summaryText("summary-blueprint", blueprint);
+
+    var kind = form.querySelector('input[name="kind"]:checked');
+    var runtime = "—";
+    if (kind) {
+      var kindPick = kind.closest(".pick");
+      var kindTitle = kindPick && kindPick.querySelector(".pick-title");
+      runtime = kindTitle ? kindTitle.textContent.trim() : kind.value;
+    }
+    summaryText("summary-runtime", runtime);
+
+    var size = form.querySelector('input[name="size"]:checked');
+    var plan = "—";
+    if (size) {
+      if (size.value === "custom") {
+        var cpu = form.querySelector('input[name="cpu"]');
+        var memory = form.querySelector('input[name="memory_mb"]');
+        var disk = form.querySelector('input[name="disk_gb"]');
+        plan = (cpu && cpu.value ? cpu.value : "?") + " vCPU · " +
+          (memory && memory.value ? memory.value : "?") + " MB · " +
+          (disk && disk.value ? disk.value : "?") + " GB";
+      } else {
+        var sizeCard = size.closest(".size-card");
+        plan = sizeCard ? (sizeCard.getAttribute("data-summary") || "") : "";
+      }
+    }
+    summaryText("summary-plan", plan || "—");
+  }
+
   document.addEventListener("change", function (event) {
     if (event.target.closest('input[name="size"]')) {
       syncCustomPlan();
@@ -390,9 +529,18 @@
     if (event.target.closest('input[name="platform"]')) {
       syncInstanceType();
     }
+    if (event.target.closest("#create-form")) {
+      syncCreateSummary();
+    }
+  });
+  document.addEventListener("input", function (event) {
+    if (event.target.closest("#create-form")) {
+      syncCreateSummary();
+    }
   });
   syncCustomPlan();
   syncInstanceType();
+  syncCreateSummary();
 
   // Application images are container-only; disable the VM option while the
   // apps platform is selected. The server validates this regardless.

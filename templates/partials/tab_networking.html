@@ -4,15 +4,15 @@
   <div class="card-head">
     <div class="grow">
       <div class="card-title">IP addresses</div>
-      <p class="card-sub">Containers use private addresses on the Incus bridge. Only the host is publicly reachable.</p>
+      <p class="card-sub">Instances use private addresses. Public traffic reaches them through their domains.</p>
     </div>
   </div>
 
   <div class="card-grid">
     <div class="card" style="margin:0">
-      <div class="stat-label">Private IPv4</div>
+      <div class="stat-label">Private address</div>
       <div class="stat-value mono" style="font-size:19px">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</div>
-      <p class="hint">Assigned by the Incus bridge. Used by the host Caddy as the upstream.</p>
+      <p class="hint">Assigned to this instance on the private network.</p>
     </div>
     {{range $i, $a := $inst.IPs}}
     {{if ne $a $inst.IP}}
@@ -35,13 +35,12 @@
   {{if .Networks}}
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Interface</th><th>Type</th><th>Network</th><th>MAC address</th><th>State</th></tr></thead>
+      <thead><tr><th>Interface</th><th>Type</th><th>MAC address</th><th>State</th></tr></thead>
       <tbody>
         {{range .Networks}}
         <tr>
           <td><strong>{{.Name}}</strong></td>
           <td class="muted">{{.Type}}</td>
-          <td>{{if .Network}}{{.Network}}{{else}}<span class="faint">—</span>{{end}}</td>
           <td class="mono">{{.MAC}}</td>
           <td><span class="pill {{if eq .State "up"}}pill-ok{{else}}pill{{end}}">{{.State}}</span></td>
         </tr>
@@ -58,7 +57,7 @@
   <div class="card-head">
     <div class="grow">
       <div class="card-title">Inbound routing</div>
-      <p class="card-sub">Public hostnames served for this instance by the host Caddy, with automatic HTTPS.</p>
+      <p class="card-sub">Public hostnames that route to this instance, with automatic HTTPS.</p>
     </div>
     <a class="btn btn-sm" href="/instances/{{$inst.Name}}?tab=domains">Manage domains</a>
   </div>
@@ -72,7 +71,7 @@
         <tr>
           <td><a href="https://{{.Domain}}" target="_blank" rel="noreferrer noopener">{{.Domain}}</a></td>
           <td class="mono muted">{{if .Upstream}}{{.Upstream}}{{else}}—{{end}}</td>
-          <td class="muted">Caddy automatic</td>
+          <td class="muted">Automatic</td>
           <td>
             {{if .Reachable}}<span class="pill pill-ok">reachable</span>
             {{else}}<span class="pill pill-warn">instance stopped</span>{{end}}

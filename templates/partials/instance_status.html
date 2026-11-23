@@ -9,44 +9,58 @@
 {{define "instance_actions_inner"}}
 {{$inst := .Inst}}
 {{if canWrite .User}}
-<a class="btn btn-outline" href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}"
-   title="Open an interactive terminal in a separate window">Console</a>
-<form method="post" action="/instances/{{$inst.Name}}/delete"
-      hx-post="/instances/{{$inst.Name}}/delete" hx-swap="none" hx-disabled-elt="find button"
-      hx-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone."
-      data-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone.">
-  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-  <button class="btn btn-outline btn-danger" type="submit">Delete</button>
-</form>
-<form method="post" action="/instances/{{$inst.Name}}/state"
-      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
-  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-  <input type="hidden" name="action" value="restart">
-  <button class="btn btn-outline" type="submit">Reboot</button>
-</form>
-{{if $inst.Running}}
-<form method="post" action="/instances/{{$inst.Name}}/state"
-      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
-  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-  <input type="hidden" name="action" value="stop">
-  <button class="btn btn-outline" type="submit">Stop</button>
-</form>
-<form method="post" action="/instances/{{$inst.Name}}/state"
-      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button"
-      hx-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data."
-      data-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data.">
-  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-  <input type="hidden" name="action" value="force-stop">
-  <button class="btn btn-outline btn-danger" type="submit" title="Power off immediately, without a clean shutdown">Force stop</button>
-</form>
-{{else}}
-<form method="post" action="/instances/{{$inst.Name}}/state"
-      hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
-  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-  <input type="hidden" name="action" value="start">
-  <button class="btn btn-outline" type="submit">Start</button>
-</form>
-{{end}}
+<a class="btn btn-primary" href="/instances/{{$inst.Name}}/console" data-console="{{$inst.Name}}"
+   title="Open an interactive terminal in a separate window">
+  <span class="mono">&gt;_</span>
+  Console
+</a>
+<div class="action-group">
+  {{if $inst.Running}}
+  <form method="post" action="/instances/{{$inst.Name}}/state"
+        hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="action" value="restart">
+    <button class="btn" type="submit">Reboot</button>
+  </form>
+  <form method="post" action="/instances/{{$inst.Name}}/state"
+        hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="action" value="stop">
+    <button class="btn" type="submit">Stop</button>
+  </form>
+  {{else}}
+  <form method="post" action="/instances/{{$inst.Name}}/state"
+        hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="action" value="start">
+    <button class="btn" type="submit">Start</button>
+  </form>
+  {{end}}
+</div>
+<details class="menu">
+  <summary class="btn btn-outline" title="More actions" aria-label="More actions for {{$inst.Name}}">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+  </summary>
+  <div class="menu-pop">
+    {{if $inst.Running}}
+    <form method="post" action="/instances/{{$inst.Name}}/state"
+          hx-post="/instances/{{$inst.Name}}/state" hx-swap="none" hx-disabled-elt="find button"
+          hx-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data."
+          data-confirm="Force stop {{$inst.Name}}? This cuts power immediately and can lose unsaved data.">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="force-stop">
+      <button type="submit" class="menu-danger">Force stop</button>
+    </form>
+    {{end}}
+    <form method="post" action="/instances/{{$inst.Name}}/delete"
+          hx-post="/instances/{{$inst.Name}}/delete" hx-swap="none" hx-disabled-elt="find button"
+          hx-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone."
+          data-confirm="Delete {{$inst.Name}} and all of its snapshots? This cannot be undone.">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="menu-danger">Delete instance…</button>
+    </form>
+  </div>
+</details>
 {{else}}
 {{template "read_only_note" .}}
 {{end}}
@@ -62,35 +76,23 @@
 
 {{define "instance_detail_inner"}}
 {{$inst := .Inst}}
+{{$isVM := eq $inst.Kind "virtual-machine"}}
 <div class="detail-col">
   <div class="detail-brand">
     <span class="os-icon lg {{osClass $inst.ImageLabel}}">{{osInitial $inst.ImageLabel}}</span>
     <div>
       <h2>{{if $inst.Tracked}}{{$inst.ImageLabel}}{{else}}{{title $inst.Kind}}{{end}}</h2>
       <span class="muted small mono">{{$inst.Name}}</span>
+      <div class="small muted mt-8">
+        {{if $inst.Owner}}Owner: <strong>{{$inst.Owner}}</strong> · {{end}}Created {{date $inst.CreatedAt}}
+      </div>
     </div>
   </div>
-  <dl class="kv" style="margin-top:16px">
-    <dt>Instance type</dt>
-    <dd>{{title $inst.Kind}}{{if $inst.Tracked}} · {{$inst.ImageLabel}}{{end}}</dd>
-    {{if $inst.Owner}}<dt>Owner</dt><dd>{{$inst.Owner}}</dd>{{end}}
-  </dl>
 </div>
 
 <div class="detail-col">
   <dl class="kv">
-    <dt>Storage pool</dt>
-    <dd class="strong">{{if $inst.StoragePool}}{{$inst.StoragePool}}{{else}}—{{end}}</dd>
-    <dt>Image</dt>
-    <dd class="mono">{{if $inst.Image}}{{$inst.Image}}{{else}}unknown{{end}}</dd>
-    <dt>Created</dt>
-    <dd>{{date $inst.CreatedAt}}</dd>
-  </dl>
-</div>
-
-<div class="detail-col">
-  <dl class="kv">
-    <dt>Private IPv4 address</dt>
+    <dt>Private address</dt>
     <dd class="strong mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</dd>
     {{if gt (len $inst.IPs) 1}}
     <dt>Other addresses</dt>
@@ -103,8 +105,19 @@
 
 <div class="detail-col">
   <dl class="kv">
+    <dt>Instance type</dt>
+    <dd>{{if $isVM}}Virtual machine{{else}}Container{{end}}</dd>
+    <dt>Blueprint</dt>
+    <dd>{{if $inst.ImageLabel}}{{$inst.ImageLabel}}{{else}}Custom{{end}}</dd>
+    <dt>Plan</dt>
+    <dd>{{$inst.CPULabel}} · {{gb $inst.MemoryBytes}} RAM · {{gb $inst.DiskBytes}} disk</dd>
+  </dl>
+</div>
+
+<div class="detail-col">
+  <dl class="kv">
     <dt>Instance status</dt>
-    <dd><span class="status {{statusClass $inst.Status}}">{{$inst.Status}}</span></dd>
+    <dd><span class="status-pill {{statusClass $inst.Status}}">{{$inst.Status}}</span></dd>
     {{if $inst.Running}}
     <dt>Uptime</dt>
     <dd>{{duration $inst.Uptime}}</dd>
@@ -116,7 +129,7 @@
 {{end}}
 
 {{define "instance_detail"}}
-<div id="instance-detail" class="detail-card" style="margin-top:18px">{{template "instance_detail_inner" .}}</div>
+<div id="instance-detail" class="detail-card mt-16">{{template "instance_detail_inner" .}}</div>
 {{end}}
 
 {{define "flash_wrap"}}
@@ -133,7 +146,7 @@
 {{define "instance_fragments"}}
 {{template "flash_oob" .}}
 <div id="instance-actions" hx-swap-oob="outerHTML:#instance-actions" class="page-actions">{{template "instance_actions_inner" .}}</div>
-<div id="instance-detail" hx-swap-oob="outerHTML:#instance-detail" class="detail-card" style="margin-top:18px">{{template "instance_detail_inner" .}}</div>
+<div id="instance-detail" hx-swap-oob="outerHTML:#instance-detail" class="detail-card mt-16">{{template "instance_detail_inner" .}}</div>
 {{end}}
 
 {{- /* Full HTMX response to POST …/state. The main body is the fresh instance

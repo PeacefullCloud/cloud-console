@@ -31,11 +31,14 @@ func renderSettingsAs(t *testing.T, role string) string {
 }
 
 func TestSettingsHidesAdminDataFromOtherRoles(t *testing.T) {
-	adminOnly := []string{"secret-bucket-name", "AKIA…MASK", "/etc/caddy/private.caddy", "internal-route.example.com", "Console users", "/settings/users"}
+	adminOnly := []string{"secret-bucket-name", "AKIA…MASK", "Console users", "/settings/users"}
+	// Stack-internal paths and generated routing config are never shown to
+	// anyone — not even administrators — in the tenant-facing console.
+	stackInternal := []string{"/etc/caddy/private.caddy", "internal-route.example.com"}
 
 	for _, role := range []string{"viewer", "operator"} {
 		out := renderSettingsAs(t, role)
-		for _, leaked := range adminOnly {
+		for _, leaked := range append(append([]string{}, adminOnly...), stackInternal...) {
 			if strings.Contains(out, leaked) {
 				t.Errorf("%s can see %q on the settings page", role, leaked)
 			}
@@ -48,9 +51,14 @@ func TestSettingsHidesAdminDataFromOtherRoles(t *testing.T) {
 	}
 
 	out := renderSettingsAs(t, "admin")
-	for _, want := range adminOnly[:5] {
+	for _, want := range adminOnly {
 		if !strings.Contains(out, want) {
 			t.Errorf("admin should see %q", want)
+		}
+	}
+	for _, leaked := range stackInternal {
+		if strings.Contains(out, leaked) {
+			t.Errorf("admin can see internal stack detail %q", leaked)
 		}
 	}
 }
