@@ -71,8 +71,10 @@ type Server struct {
 	consoleMu       sync.Mutex
 	consoleSessions int
 	consoleByUser   map[int64]int
+	consoleNextID   uint64
+	consoleActive   map[uint64]*consoleHandle
 
-	// SFTP file-panel sessions, keyed by the console session token hash.
+	// SFTP file-panel sessions, keyed by tokenHash + "\x00" + instanceName.
 	// Closing one on logout mirrors closing the terminal itself.
 	sftpMu       sync.Mutex
 	sftpSessions map[string]*sftpSession
@@ -175,12 +177,18 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /instances/{name}/backups/{backup}/export", s.requireInstance(s.handleBackupExport))
 
 	m.HandleFunc("POST /instances/{name}/restic/backup", s.requireInstance(s.handleResticBackupCreate))
-	m.HandleFunc("POST /instances/{name}/restic/{id}/restore", s.requireInstance(s.handleResticSnapshotRestore))
-	m.HandleFunc("POST /instances/{name}/restic/{id}/delete", s.requireInstance(s.handleResticSnapshotDelete))
+	m.HandleFunc("POST /instances/{name}/restic/{id}/restore", s.requireInstanceOrDeleted(s.handleResticSnapshotRestore))
+	m.HandleFunc("POST /instances/{name}/restic/{id}/delete", s.requireInstanceOrDeleted(s.handleResticSnapshotDelete))
 
 	m.HandleFunc("POST /instances/{name}/domains", s.requireInstance(s.handleDomainCreate))
 	m.HandleFunc("POST /instances/{name}/domains/{id}/delete", s.requireInstance(s.handleInstanceDomainDelete))
 	m.HandleFunc("POST /domains/{id}/delete", s.requireDomain(s.handleDomainDelete))
+
+	m.HandleFunc("POST /instances/{name}/volumes", s.requireInstance(s.handleVolumeAttach))
+	m.HandleFunc("POST /instances/{name}/volumes/{dev}/detach", s.requireInstance(s.handleVolumeDetach))
+
+	m.HandleFunc("POST /instances/{name}/ports", s.requireInstance(s.handlePortForwardAdd))
+	m.HandleFunc("POST /instances/{name}/ports/{dev}/delete", s.requireInstance(s.handlePortForwardDelete))
 
 	m.HandleFunc("GET /snapshots", s.handleSnapshots)
 	m.HandleFunc("GET /backups", s.handleBackups)
@@ -588,6 +596,25 @@ func (s *Server) requireInstance(next http.HandlerFunc) http.HandlerFunc {
 			if err != nil || !scope.CanAccessOwner(meta.OwnerID) {
 				http.NotFound(w, r)
 				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+// requireInstanceOrDeleted allows Restic restore/delete operations to proceed
+// when the instance was already deleted (in which case the handler verifies
+// ownership via the Restic destination), while still blocking access if the
+// instance currently exists and belongs to another tenant.
+func (s *Server) requireInstanceOrDeleted(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scope := scopeFrom(r)
+		if !scope.Admin {
+			if meta, err := s.App.DB.GetInstanceMeta(r.PathValue("name")); err == nil {
+				if !scope.CanAccessOwner(meta.OwnerID) {
+					http.NotFound(w, r)
+					return
+				}
 			}
 		}
 		next(w, r)

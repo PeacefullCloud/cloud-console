@@ -162,3 +162,17 @@ func TestHostFromURL(t *testing.T) {
 		}
 	}
 }
+
+func TestIsVirtualInterfaceSkipsBridges(t *testing.T) {
+	for _, virt := range []string{"incusbr0", "lxdbr0", "docker0", "veth1234", "virbr0", "br-abcd", "wg0"} {
+		if !isVirtualInterface(virt) {
+			t.Errorf("expected %q to be treated as virtual interface", virt)
+		}
+	}
+	for _, phys := range []string{"eth0", "ens3", "enp0s31f6", "eno1", "wlan0"} {
+		if isVirtualInterface(phys) {
+			t.Errorf("expected %q to be treated as physical interface", phys)
+		}
+	}
+}
+

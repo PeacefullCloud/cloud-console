@@ -259,21 +259,27 @@ func withinRoot(root, p string) bool {
 	return true
 }
 
+func sftpSessionKey(tokenHash, instance string) string {
+	return tokenHash + "\x00" + instance
+}
+
 // openSFTP starts sftp-server in the instance and registers the client against
-// the caller's session token. An existing connection for the token is reused.
+// the caller's session token and instance name. An existing connection for the
+// same (token, instance) pair is reused.
 func (s *Server) openSFTP(ctx context.Context, r *http.Request, name string) (*sftpSession, error) {
 	token := tokenFrom(r)
 	if token == "" {
 		return nil, errors.New("no console session")
 	}
 	hash := auth.HashToken(token)
+	key := sftpSessionKey(hash, name)
 	user := userFrom(r)
 	if user == nil {
 		return nil, errors.New("no console session")
 	}
 
 	s.sftpMu.Lock()
-	if existing, ok := s.sftpSessions[hash]; ok {
+	if existing, ok := s.sftpSessions[key]; ok {
 		s.sftpMu.Unlock()
 		existing.touch()
 		return existing, nil
@@ -386,7 +392,7 @@ func (s *Server) openSFTP(ctx context.Context, r *http.Request, name string) (*s
 		uploads: map[uint64]*sftpUpload{}, downloads: map[uint64]*sftp.File{},
 	}
 	s.sftpMu.Lock()
-	s.sftpSessions[hash] = sess
+	s.sftpSessions[key] = sess
 	s.sftpMu.Unlock()
 
 	// If the guest process ends on its own, drop the session so a reconnect
@@ -394,8 +400,8 @@ func (s *Server) openSFTP(ctx context.Context, r *http.Request, name string) (*s
 	go func() {
 		_ = op.Wait()
 		s.sftpMu.Lock()
-		if current, ok := s.sftpSessions[hash]; ok && current == sess {
-			delete(s.sftpSessions, hash)
+		if current, ok := s.sftpSessions[key]; ok && current == sess {
+			delete(s.sftpSessions, key)
 		}
 		s.sftpMu.Unlock()
 		sess.shutdown()
@@ -404,27 +410,37 @@ func (s *Server) openSFTP(ctx context.Context, r *http.Request, name string) (*s
 	return sess, nil
 }
 
-// closeSFTP tears down one token's connection.
-func (s *Server) closeSFTP(tokenHash string) {
-	s.sftpMu.Lock()
-	sess := s.sftpSessions[tokenHash]
-	delete(s.sftpSessions, tokenHash)
-	s.sftpMu.Unlock()
-	if sess != nil {
-		sess.shutdown()
+func sftpKeyHash(key string, sess *sftpSession) string {
+	if sess != nil && sess.tokenHash != "" {
+		return sess.tokenHash
 	}
+	if i := strings.IndexByte(key, 0); i >= 0 {
+		return key[:i]
+	}
+	return key
 }
 
-// revokeSFTPUser closes every SFTP connection belonging to a user. Logout,
-// session revocation and password changes all end up here so an already-open
-// panel cannot outlive the console session that created it.
-func (s *Server) revokeSFTPUser(userID int64, exceptHash string) {
+// closeSFTP tears down one token's connection (for a specific instance if
+// instance is non-empty, or across all instances for that token when empty).
+func (s *Server) closeSFTP(tokenHash string, instance ...string) {
+	inst := ""
+	if len(instance) > 0 {
+		inst = instance[0]
+	}
 	s.sftpMu.Lock()
 	var dead []*sftpSession
-	for hash, sess := range s.sftpSessions {
-		if sess.userID == userID && hash != exceptHash {
+	if inst != "" {
+		key := sftpSessionKey(tokenHash, inst)
+		if sess := s.sftpSessions[key]; sess != nil {
 			dead = append(dead, sess)
-			delete(s.sftpSessions, hash)
+			delete(s.sftpSessions, key)
+		}
+	} else {
+		for k, sess := range s.sftpSessions {
+			if sftpKeyHash(k, sess) == tokenHash {
+				dead = append(dead, sess)
+				delete(s.sftpSessions, k)
+			}
 		}
 	}
 	s.sftpMu.Unlock()
@@ -433,14 +449,34 @@ func (s *Server) revokeSFTPUser(userID int64, exceptHash string) {
 	}
 }
 
-// revokeSFTPHandle closes the panel tied to one public session handle.
-func (s *Server) revokeSFTPHandle(handle string) {
+// revokeSFTPUser closes every SFTP and web-terminal connection belonging to a
+// user. Logout, session revocation and password changes all end up here so an
+// already-open panel or shell cannot outlive the console session that created it.
+func (s *Server) revokeSFTPUser(userID int64, exceptHash string) {
+	s.revokeConsoleUser(userID, exceptHash)
 	s.sftpMu.Lock()
 	var dead []*sftpSession
-	for hash, sess := range s.sftpSessions {
-		if database.SessionHandle(hash) == handle {
+	for k, sess := range s.sftpSessions {
+		if sess.userID == userID && (exceptHash == "" || sftpKeyHash(k, sess) != exceptHash) {
 			dead = append(dead, sess)
-			delete(s.sftpSessions, hash)
+			delete(s.sftpSessions, k)
+		}
+	}
+	s.sftpMu.Unlock()
+	for _, sess := range dead {
+		sess.shutdown()
+	}
+}
+
+// revokeSFTPHandle closes the panel and terminal tied to one public session handle.
+func (s *Server) revokeSFTPHandle(handle string) {
+	s.revokeConsoleHandle(handle)
+	s.sftpMu.Lock()
+	var dead []*sftpSession
+	for k, sess := range s.sftpSessions {
+		if database.SessionHandle(sftpKeyHash(k, sess)) == handle {
+			dead = append(dead, sess)
+			delete(s.sftpSessions, k)
 		}
 	}
 	s.sftpMu.Unlock()
@@ -558,19 +594,20 @@ func (s *Server) handleSFTPSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.SetReadLimit(sftpReadLimit)
 	conn := &sftpConn{ws: ws, done: make(chan struct{})}
+	instName := r.PathValue("name")
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
 			close(conn.done)
 			_ = ws.Close()
-			s.closeSFTP(auth.HashToken(tokenFrom(r)))
+			s.closeSFTP(auth.HashToken(tokenFrom(r)), instName)
 			s.consoleRelease(user.ID)
 			released = true
 		})
 	}
 	defer cleanup()
 
-	sess, err := s.openSFTP(r.Context(), r, r.PathValue("name"))
+	sess, err := s.openSFTP(r.Context(), r, instName)
 	if err != nil {
 		conn.sendError(err)
 		return
@@ -967,34 +1004,52 @@ func (s *Server) streamDownload(conn *sftpConn, sess *sftpSession, id uint64, f 
 }
 
 func (sess *sftpSession) copyRecursive(src, dst string) error {
-	info, err := sess.client.Stat(src)
+	resolvedSrc, err := sess.resolve(src)
 	if err != nil {
 		return err
 	}
-	if withinRoot(src, dst) && src != sess.root {
+	resolvedDst, err := sess.resolve(dst)
+	if err != nil {
+		return err
+	}
+	linfo, err := sess.client.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if linfo.Mode()&os.ModeSymlink != 0 {
+		return errSFTPPath
+	}
+	info, err := sess.client.Stat(resolvedSrc)
+	if err != nil {
+		return err
+	}
+	if withinRoot(resolvedSrc, resolvedDst) && resolvedSrc != sess.root {
 		return errors.New("cannot copy a folder into itself")
 	}
 	if info.IsDir() {
-		if err := sess.client.MkdirAll(dst); err != nil {
+		if err := sess.client.MkdirAll(resolvedDst); err != nil {
 			return err
 		}
-		children, err := sess.client.ReadDir(src)
+		children, err := sess.client.ReadDir(resolvedSrc)
 		if err != nil {
 			return err
 		}
 		for _, child := range children {
-			if err := sess.copyRecursive(path.Join(src, child.Name()), path.Join(dst, child.Name())); err != nil {
+			if child.Mode()&os.ModeSymlink != 0 {
+				return errSFTPPath
+			}
+			if err := sess.copyRecursive(path.Join(resolvedSrc, child.Name()), path.Join(resolvedDst, child.Name())); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	in, err := sess.client.Open(src)
+	in, err := sess.client.Open(resolvedSrc)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := sess.client.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	out, err := sess.client.OpenFile(resolvedDst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return err
 	}

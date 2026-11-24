@@ -277,9 +277,19 @@ func (s *Service) WaitForAgent(ctx context.Context, name string, timeout time.Du
 }
 
 // ValidateSSHKey checks an SSH public key the way sshd expects it:
-// "<type> <base64-blob> [comment]".
+// "<type> <base64-blob> [comment]". Multi-line input or control characters are
+// refused so extra authorized_keys lines or options cannot be smuggled in.
 func ValidateSSHKey(key string) error {
-	fields := strings.Fields(strings.TrimSpace(key))
+	trimmed := strings.TrimSpace(key)
+	if strings.ContainsAny(trimmed, "\r\n\x00") {
+		return fmt.Errorf("SSH key must be a single line")
+	}
+	for _, r := range trimmed {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("SSH key contains invalid control characters")
+		}
+	}
+	fields := strings.Fields(trimmed)
 	if len(fields) < 2 {
 		return fmt.Errorf("SSH key must look like \"ssh-ed25519 AAAA...\"")
 	}

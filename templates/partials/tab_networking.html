@@ -85,4 +85,64 @@
   <p class="muted small" style="margin:0">No domains point at this instance yet.</p>
   {{end}}
 </div>
+
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Firewall &amp; port forwarding</div>
+      <p class="card-sub">Inbound ports are blocked by default except HTTP/HTTPS domains above. Expose specific TCP or UDP ports here.</p>
+    </div>
+  </div>
+
+  {{if .PortForwards}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Protocol</th><th>External port</th><th>Instance port</th><th>Rule</th><th></th></tr></thead>
+      <tbody>
+        {{range .PortForwards}}
+        <tr>
+          <td><span class="pill">{{.Protocol}}</span></td>
+          <td class="mono">{{if $.PublicIP}}{{$.PublicIP}}:{{end}}{{.ListenPort}}</td>
+          <td class="mono">127.0.0.1:{{.TargetPort}}</td>
+          <td class="muted">{{.Name}}</td>
+          <td class="right">
+            {{if canWrite $.User}}
+            <form method="POST" action="/instances/{{$inst.Name}}/ports/{{.Name}}/delete" style="display:inline">
+              <button class="btn btn-sm btn-danger" type="submit" data-confirm="Remove port forward {{.Protocol}} {{.ListenPort}} → {{.TargetPort}}?">Remove</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="muted small" style="margin:0">No custom TCP/UDP ports are exposed on the host.</p>
+  {{end}}
+
+  {{if canWrite .User}}
+  <form method="POST" action="/instances/{{$inst.Name}}/ports" class="mt-24">
+    <div class="label">Expose a port</div>
+    <div class="field-row">
+      <div class="field">
+        <label for="protocol">Protocol</label>
+        <select id="protocol" name="protocol">
+          <option value="tcp">TCP</option>
+          <option value="udp">UDP</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="listen_port">External host port (10000–60000)</label>
+        <input id="listen_port" name="listen_port" type="number" min="10000" max="60000" placeholder="22022" required>
+      </div>
+      <div class="field">
+        <label for="target_port">Instance port (1–65535)</label>
+        <input id="target_port" name="target_port" type="number" min="1" max="65535" placeholder="22" required>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-sm mt-8" type="submit">Add port forward</button>
+  </form>
+  {{end}}
+</div>
 {{end}}

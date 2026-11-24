@@ -95,15 +95,57 @@ func (s *Server) attachedDisks(name string) []diskView {
 			source = device["path"]
 		}
 
+		_, isDirect := inst.Devices[deviceName]
 		out = append(out, diskView{
 			Name:   deviceName,
 			Type:   "disk",
 			Pool:   device["pool"],
 			Source: source,
 			Path:   device["path"],
+			Custom: isDirect,
 		})
 	}
 	return out
+}
+
+// portForwards lists the instance's TCP/UDP proxy port forwards.
+func (s *Server) portForwards(name string) []portForwardView {
+	inst, err := s.Instances.RawInstance(name)
+	if err != nil {
+		return nil
+	}
+	var out []portForwardView
+	for _, devName := range sortedKeys(inst.Devices) {
+		dev := inst.Devices[devName]
+		if dev["type"] != "proxy" {
+			continue
+		}
+		proto, listenPort := parseProxyEndpoint(dev["listen"])
+		_, targetPort := parseProxyEndpoint(dev["connect"])
+		if proto == "" || listenPort <= 0 || targetPort <= 0 {
+			continue
+		}
+		out = append(out, portForwardView{
+			Name:       devName,
+			Protocol:   strings.ToUpper(proto),
+			ListenPort: listenPort,
+			TargetPort: targetPort,
+		})
+	}
+	return out
+}
+
+func parseProxyEndpoint(raw string) (string, int) {
+	// Format: tcp:0.0.0.0:10022 or udp:127.0.0.1:51820
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	if len(parts) < 3 {
+		return "", 0
+	}
+	port, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return "", 0
+	}
+	return strings.ToLower(parts[0]), port
 }
 
 // networkDevices describes the instance's NICs.

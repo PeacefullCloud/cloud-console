@@ -88,7 +88,7 @@ func TestLimitsNoRootDevice(t *testing.T) {
 }
 
 func TestLimitsValidate(t *testing.T) {
-	for _, l := range []Limits{{CPU: ptr(-1)}, {CPU: ptr(MaxCPU + 1)}, {MemoryMB: ptr(-5)}, {DiskGB: ptr(MaxDiskGB + 1)}} {
+	for _, l := range []Limits{{CPU: ptr(-1)}, {CPU: ptr(MaxCPU + 1)}, {MemoryMB: ptr(-5)}, {MemoryMB: ptr(32)}, {DiskGB: ptr(MaxDiskGB + 1)}} {
 		if err := l.validate(); !errors.Is(err, ErrInvalidSpec) {
 			t.Errorf("%+v accepted", l)
 		}
@@ -97,3 +97,44 @@ func TestLimitsValidate(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestValidateNameRejectsReservedNames(t *testing.T) {
+	for _, reserved := range []string{"console", "incus"} {
+		if err := ValidateName(reserved); !errors.Is(err, ErrInvalidName) {
+			t.Errorf("ValidateName(%q) = %v, want ErrInvalidName", reserved, err)
+		}
+	}
+	if err := ValidateName("web-app-1"); err != nil {
+		t.Errorf("ValidateName(web-app-1) = %v", err)
+	}
+}
+
+func TestValidateSSHKeyRejectsNewlinesAndControlChars(t *testing.T) {
+	validKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+H8j0 user@example"
+	if err := ValidateSSHKey(validKey); err != nil {
+		t.Fatalf("expected valid key, got %v", err)
+	}
+	for _, bad := range []string{
+		validKey + "\ncommand=\"/bin/sh\" " + validKey,
+		validKey + "\r" + validKey,
+		validKey + "\x00",
+	} {
+		if err := ValidateSSHKey(bad); err == nil {
+			t.Errorf("expected multi-line/control-char SSH key to be rejected")
+		}
+	}
+}
+
+func TestValidVolumeMountPath(t *testing.T) {
+	for _, okPath := range []string{"/mnt/data", "/srv/storage", "/data/db", "/opt/app"} {
+		if _, err := validVolumeMountPath(okPath); err != nil {
+			t.Errorf("validVolumeMountPath(%q) unexpected error: %v", okPath, err)
+		}
+	}
+	for _, badPath := range []string{"", "/", "/etc", "/etc/passwd", "/var/lib", "/root/data", "/mnt", "/mnt/../etc/ shadow", "relative/path"} {
+		if _, err := validVolumeMountPath(badPath); err == nil {
+			t.Errorf("validVolumeMountPath(%q) expected error, got nil", badPath)
+		}
+	}
+}
+

@@ -36,17 +36,24 @@ type scheduleStore interface {
 // It is stateless: whether an instance is due is decided from the age of its
 // newest automatic snapshot, so a restart neither skips nor doubles a run.
 type Scheduler struct {
-	host     scheduleHost
-	store    scheduleStore
-	log      *slog.Logger
-	interval time.Duration
-	keep     int
-	now      func() time.Time
+	host        scheduleHost
+	store       scheduleStore
+	log         *slog.Logger
+	interval    time.Duration
+	keep        int
+	now         func() time.Time
+	offsiteHook func(instanceName string)
 }
 
 // NewScheduler builds a scheduler. Interval <= 0 or keep <= 0 means disabled.
 func NewScheduler(host scheduleHost, store scheduleStore, log *slog.Logger, interval time.Duration, keep int) *Scheduler {
 	return &Scheduler{host: host, store: store, log: log, interval: interval, keep: keep, now: time.Now}
+}
+
+// SetOffsiteHook registers an optional callback invoked after a scheduled
+// snapshot succeeds so off-site Restic backups can be queued asynchronously.
+func (s *Scheduler) SetOffsiteHook(fn func(instanceName string)) {
+	s.offsiteHook = fn
 }
 
 // Enabled reports whether the scheduler will do anything.
@@ -117,6 +124,9 @@ func (s *Scheduler) handle(ctx context.Context, name string) {
 			InstanceName: name, Name: snap, Note: "Scheduled snapshot", CreatedBy: "scheduler",
 		}); err != nil {
 			s.log.Warn("could not save snapshot metadata", "instance", name, "err", err)
+		}
+		if s.offsiteHook != nil {
+			s.offsiteHook(name)
 		}
 		// Re-read so retention counts the snapshot just taken.
 		if snaps, err = s.host.Snapshots(name); err != nil {

@@ -310,6 +310,9 @@ func ValidateName(name string) error {
 	if !namePattern.MatchString(name) {
 		return ErrInvalidName
 	}
+	if name == "console" || name == "incus" {
+		return fmt.Errorf("%w: %q is a reserved name", ErrInvalidName, name)
+	}
 	// Reserved prefixes keep the console's own resources distinguishable.
 	for _, prefix := range []string{"console-", "incus-"} {
 		if strings.HasPrefix(name, prefix) {

@@ -96,6 +96,33 @@ func TestParseSFTPRepoAndKeyOpts(t *testing.T) {
 	if _, _, err := parseSFTPRepo("sftp:bad;user@host/path"); err == nil {
 		t.Fatal("expected shell metacharacter rejection")
 	}
+	if _, _, err := parseSFTPRepo("sftp:-oProxyCommand=id@host/path"); err == nil {
+		t.Fatal("expected leading hyphen SSH option injection in user to be rejected")
+	}
+	if _, _, err := parseSFTPRepo("sftp:user@-oProxyCommand=id/path"); err == nil {
+		t.Fatal("expected leading hyphen SSH option injection in host to be rejected")
+	}
+
+	if err := ValidateDestination(&models.BackupDestination{
+		Name: "local-nonadmin", Kind: "local", RepoURL: "/var/tmp/backups",
+	}, false); err == nil {
+		t.Fatal("expected non-admin local destination to be rejected")
+	}
+	if err := ValidateDestination(&models.BackupDestination{
+		Name: "local-etc", Kind: "local", RepoURL: "/etc/caddy",
+	}, true); err == nil {
+		t.Fatal("expected restricted /etc path to be rejected")
+	}
+	if err := ValidateDestination(&models.BackupDestination{
+		Name: "s3-loopback", Kind: "s3", RepoURL: "s3:http://127.0.0.1:2019/bucket",
+	}, true); err == nil {
+		t.Fatal("expected loopback SSRF S3 endpoint to be rejected")
+	}
+	if err := ValidateDestination(&models.BackupDestination{
+		Name: "s3-imds", Kind: "s3", RepoURL: "s3:http://169.254.169.254/latest",
+	}, true); err == nil {
+		t.Fatal("expected link-local metadata SSRF S3 endpoint to be rejected")
+	}
 
 	dest := &models.BackupDestination{
 		Kind:          "sftp",
@@ -107,7 +134,7 @@ func TestParseSFTPRepoAndKeyOpts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(opts) != 2 || opts[0] != "-o" || !strings.Contains(opts[1], "sftp.command=ssh -i ") || !strings.Contains(opts[1], "-p 23 u12345@box.example.com -s sftp") {
+	if len(opts) != 2 || opts[0] != "-o" || !strings.Contains(opts[1], "sftp.command=ssh -i ") || !strings.Contains(opts[1], "-p 23 -- u12345@box.example.com -s sftp") {
 		t.Fatalf("unexpected sftp opts: %#v", opts)
 	}
 	cleanup()

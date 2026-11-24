@@ -43,14 +43,22 @@
   {{if .Disks}}
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Device</th><th>Type</th><th>Source</th><th>Path</th></tr></thead>
+      <thead><tr><th>Device</th><th>Type</th><th>Pool</th><th>Source</th><th>Mount path</th><th></th></tr></thead>
       <tbody>
         {{range .Disks}}
         <tr>
           <td><strong>{{.Name}}</strong></td>
           <td class="muted">{{.Type}}</td>
+          <td class="muted">{{if .Pool}}{{.Pool}}{{else}}—{{end}}</td>
           <td class="mono">{{.Source}}</td>
           <td class="mono">{{.Path}}</td>
+          <td class="right">
+            {{if and (canWrite $.User) .Custom}}
+            <form method="POST" action="/instances/{{$inst.Name}}/volumes/{{.Name}}/detach" style="display:inline">
+              <button class="btn btn-sm btn-danger" type="submit" data-confirm="Detach {{.Name}} ({{.Path}}) from {{$inst.Name}}?">Detach</button>
+            </form>
+            {{end}}
+          </td>
         </tr>
         {{end}}
       </tbody>
@@ -58,6 +66,28 @@
   </div>
   {{else}}
   <p class="muted small" style="margin:0">No additional disks are attached to this instance.</p>
+  {{end}}
+
+  {{if canWrite .User}}
+  <form method="POST" action="/instances/{{$inst.Name}}/volumes" class="mt-24">
+    <div class="label">Attach a block volume</div>
+    <div class="field-row">
+      <div class="field">
+        <label for="volume_name">Volume name</label>
+        <input id="volume_name" name="volume_name" type="text" required pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" placeholder="data">
+      </div>
+      <div class="field">
+        <label for="size_gb">Size (GB)</label>
+        <input id="size_gb" name="size_gb" type="number" min="1" max="10240" value="20" required>
+      </div>
+      <div class="field">
+        <label for="mount_path">Mount path</label>
+        <input id="mount_path" name="mount_path" type="text" required placeholder="/mnt/data" value="/mnt/data">
+      </div>
+    </div>
+    <p class="hint">Mount path must be under <span class="mono">/mnt/</span>, <span class="mono">/srv/</span>, <span class="mono">/data/</span>, or <span class="mono">/opt/</span>.</p>
+    <button class="btn btn-primary btn-sm mt-8" type="submit">Create &amp; attach volume</button>
+  </form>
   {{end}}
 
   <p class="hint mt-16">

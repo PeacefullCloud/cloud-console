@@ -132,14 +132,38 @@ func (m *Manager) tlsAskURL() string {
 	return "http://" + host + "/api/internal/tls-check"
 }
 
-// detectLANIP returns the first private (LAN) IPv4 address assigned to a host
-// interface, used to bind Caddy away from the metadata service on 169.254.x.x.
+// isVirtualInterface reports whether ifaceName is a container/VM bridge or
+// tunnel interface that public domain traffic should never bind to.
+func isVirtualInterface(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range []string{
+		"incusbr", "lxdbr", "docker", "veth", "virbr", "br-",
+		"cni", "flannel", "cali", "tun", "tap", "wg", "tailscale",
+	} {
+		if strings.HasPrefix(n, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectLANIP returns the host's primary non-virtual IPv4 address (preferring a
+// public IPv4 on a physical interface if present, otherwise the physical LAN
+// IPv4), so Caddy never binds to incusbr0 or link-local addresses.
 func detectLANIP() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return ""
 	}
+	_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
+	var lanFallback string
 	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isVirtualInterface(iface.Name) {
+			continue
+		}
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
@@ -155,19 +179,22 @@ func detectLANIP() string {
 			if ip == nil || ip.IsLoopback() {
 				continue
 			}
-			if ip4 := ip.To4(); ip4 != nil && ip4.IsPrivate() {
-				// Skip carrier-grade NAT and link-local ranges.
-				if _, cg, err := net.ParseCIDR("100.64.0.0/10"); err == nil && cg.Contains(ip4) {
-					continue
-				}
-				if ip4.IsLinkLocalUnicast() {
-					continue
-				}
+			ip4 := ip.To4()
+			if ip4 == nil || ip4.IsLinkLocalUnicast() || ip4.IsLinkLocalMulticast() || ip4.IsUnspecified() {
+				continue
+			}
+			if cgnat != nil && cgnat.Contains(ip4) {
+				continue
+			}
+			if !ip4.IsPrivate() {
 				return ip4.String()
+			}
+			if lanFallback == "" {
+				lanFallback = ip4.String()
 			}
 		}
 	}
-	return ""
+	return lanFallback
 }
 
 // ConsoleHost is the hostname the console itself is served on through Caddy,

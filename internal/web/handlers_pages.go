@@ -320,8 +320,20 @@ func (s *Server) handleJobsStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "retry: 3000\n\n")
 	flusher.Flush()
 
-	frames, unsubscribe := s.jobFeed(scopeFrom(r)).subscribe(s.streamCtx)
-	defer unsubscribe()
+	scope := scopeFrom(r)
+	jf := s.jobFeed(scope)
+	frames, unsubscribe := jf.subscribe(s.streamCtx)
+	defer func() {
+		unsubscribe()
+		if !scope.Admin {
+			key := "user:" + strconv.FormatInt(scope.UserID, 10)
+			s.feedMu.Lock()
+			if current, ok := s.jobFeeds[key]; ok && current == jf && jf.empty() {
+				delete(s.jobFeeds, key)
+			}
+			s.feedMu.Unlock()
+		}
+	}()
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -708,6 +720,7 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Sessions cascade on delete, but clear them explicitly in case
 			// foreign keys are ever disabled.
+			s.revokeSFTPUser(target.ID, "")
 			_ = s.App.DB.DeleteUserSessions(target.ID)
 			if derr := s.App.DB.DeleteUser(target.ID); derr != nil {
 				err = derr
@@ -952,13 +965,14 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Codes are made here so nobody turns 2FA on without a way back in,
+	// whether the form was submitted via HTMX or a standard POST.
+	codes, cerr := s.App.Auth.GenerateRecoveryCodes(user.ID)
+	if cerr != nil {
+		s.log.Error("could not generate recovery codes", "err", cerr)
+	}
 	s.App.Activity.Record(user.Username, "Enable two-factor", user.Username, "", nil)
 	if isHTMX(r) {
-		// Codes are made here so nobody turns 2FA on without a way back in.
-		codes, cerr := s.App.Auth.GenerateRecoveryCodes(user.ID)
-		if cerr != nil {
-			s.log.Error("could not generate recovery codes", "err", cerr)
-		}
 		s.serveTOTPFragmentsWithCodes(w, r, nil, "Two-factor authentication is on.", codes)
 		return
 	}

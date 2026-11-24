@@ -103,6 +103,29 @@ func (c *Client) StoragePoolResources(name string) (*api.ResourcesStoragePool, e
 	return c.srv.GetStoragePoolResources(name)
 }
 
+// CreateVolume creates a custom filesystem storage volume in a storage pool.
+func (c *Client) CreateVolume(pool, volName string, sizeGB int) error {
+	defer c.list.invalidate()
+	cfg := map[string]string{}
+	if sizeGB > 0 {
+		cfg["size"] = fmt.Sprintf("%dGiB", sizeGB)
+	}
+	return c.srv.CreateStoragePoolVolume(pool, api.StorageVolumesPost{
+		Name:        volName,
+		Type:        "custom",
+		ContentType: "filesystem",
+		StorageVolumePut: api.StorageVolumePut{
+			Config: cfg,
+		},
+	})
+}
+
+// DeleteVolume deletes a custom storage volume from a storage pool.
+func (c *Client) DeleteVolume(pool, volName string) error {
+	defer c.list.invalidate()
+	return c.srv.DeleteStoragePoolVolume(pool, "custom", volName)
+}
+
 // Exec runs a command as root inside a running instance (container or VM
 // with a working agent) and returns trimmed combined output. Stdin content
 // is streamed to the command when non-empty.

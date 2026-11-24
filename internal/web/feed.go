@@ -61,6 +61,12 @@ func (f *feed) subscribe(parent context.Context) (<-chan frame, func()) {
 	}
 }
 
+func (f *feed) empty() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.subs) == 0
+}
+
 func (f *feed) poll(ctx context.Context) {
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()

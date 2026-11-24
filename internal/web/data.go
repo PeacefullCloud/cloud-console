@@ -120,6 +120,7 @@ type createForm struct {
 	RootPassword string
 	SSHKey       string
 	SSHKeyID     int64 // saved key chosen from SSHKeys, 0 = none
+	LaunchScript string
 	Size         string
 	StoragePool  string
 	CPU          int
@@ -160,11 +161,12 @@ type instanceData struct {
 	ResticDestinations []models.BackupDestination
 	ResticSnapshots    []models.ResticSnapshot
 	Domains            []domains.Record
-	Activity  []models.Activity
-	Disks     []diskView
-	Networks  []networkView
-	Images    []incus.Image
-	Sizes     []Size
+	Activity     []models.Activity
+	Disks        []diskView
+	Networks     []networkView
+	PortForwards []portForwardView
+	Images       []incus.Image
+	Sizes        []Size
 
 	// Owners lists the accounts an administrator may reassign the instance
 	// to. It is empty for everyone else.
@@ -189,6 +191,14 @@ type diskView struct {
 	Pool   string
 	Source string
 	Path   string
+	Custom bool
+}
+
+type portForwardView struct {
+	Name       string
+	Protocol   string
+	ListenPort int
+	TargetPort int
 }
 
 type networkView struct {

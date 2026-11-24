@@ -23,6 +23,7 @@ var pathRules = map[string]*regexp.Regexp{
 	"name":     pathName,
 	"snapshot": pathLabel,
 	"backup":   pathLabel,
+	"dev":      pathLabel,
 	"id":       pathID,
 	"provider": pathID,
 	"tab":      pathTab,

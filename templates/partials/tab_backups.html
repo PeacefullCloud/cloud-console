@@ -68,7 +68,7 @@
             {{else}}
             {{if canWrite $.User}}
             <div class="row-tight">
-              {{if .LocalExists}}
+              {{if or .LocalExists .InS3}}
               <form method="post" action="/instances/{{$inst.Name}}/backups/{{.Name}}/restore"
                     data-confirm="Restore {{$inst.Name}} from {{.Name}}? The current instance is deleted and re-created from the archive.">
                 <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

@@ -212,9 +212,15 @@ func (d *DB) ListAllResticSnapshotsScoped(scope models.Scope) ([]models.ResticSn
 		       rs.status, rs.error, rs.created_by, rs.created_at
 		FROM restic_snapshots rs
 		JOIN backup_destinations bd ON bd.id = rs.destination_id
-		JOIN instances i ON i.name = rs.instance_name
-		WHERE i.owner_id = ?
-		ORDER BY rs.created_at DESC`, scope.UserID)
+		LEFT JOIN instances i ON i.name = rs.instance_name
+		WHERE (i.owner_id = ? OR (i.owner_id IS NULL AND bd.user_id = ?))
+		ORDER BY rs.created_at DESC`, scope.UserID, scope.UserID)
+}
+
+// RenameResticSnapshots updates instance_name when an instance is renamed.
+func (d *DB) RenameResticSnapshots(oldName, newName string) error {
+	_, err := d.sql.Exec(`UPDATE restic_snapshots SET instance_name = ? WHERE instance_name = ?`, newName, oldName)
+	return err
 }
 
 // DeleteResticSnapshot removes one snapshot metadata row.

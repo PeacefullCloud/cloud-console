@@ -239,6 +239,18 @@
                    placeholder="8+ characters" value="{{.Form.RootPassword}}">
             <p class="hint">Leave empty for key-only access, which is more secure. Set one only if you also want password login. The web console does not need it.</p>
           </div>
+
+          <details class="disclosure mt-16" {{if .Form.LaunchScript}}open{{end}}>
+            <summary>Launch script / Cloud-Init (optional)</summary>
+            <div class="disclosure-body">
+              <div class="field">
+                <label for="launch_script">First-boot script or #cloud-config</label>
+                <textarea id="launch_script" name="launch_script" rows="5" class="mono" spellcheck="false"
+                          placeholder="#!/bin/sh&#10;apt-get update &amp;&amp; apt-get install -y curl">{{.Form.LaunchScript}}</textarea>
+                <p class="hint">Runs automatically as root on first boot. Output is logged to <span class="mono">/var/log/cloud-console-launch.log</span> inside the instance.</p>
+              </div>
+            </div>
+          </details>
         </div>
 
       </div>

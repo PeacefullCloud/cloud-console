@@ -299,6 +299,17 @@ func InstanceIP(full *api.InstanceFull) string {
 			return addr
 		}
 	}
+	// Fallback to global IPv6 for IPv6-only networks.
+	for _, name := range preferred {
+		if addr := firstGlobalIPv6(full.State.Network[name]); addr != "" {
+			return addr
+		}
+	}
+	for _, name := range names {
+		if addr := firstGlobalIPv6(full.State.Network[name]); addr != "" {
+			return addr
+		}
+	}
 	return ""
 }
 
@@ -332,6 +343,22 @@ func firstGlobalIPv4(iface api.InstanceStateNetwork) string {
 			continue
 		}
 		if strings.HasPrefix(addr.Address, "127.") {
+			continue
+		}
+		return addr.Address
+	}
+	return ""
+}
+
+func firstGlobalIPv6(iface api.InstanceStateNetwork) string {
+	if iface.State != "" && iface.State != "up" && iface.State != "unknown" {
+		return ""
+	}
+	for _, addr := range iface.Addresses {
+		if addr.Family != "inet6" || addr.Scope != "global" {
+			continue
+		}
+		if addr.Address == "::1" || strings.HasPrefix(strings.ToLower(addr.Address), "fe80:") {
 			continue
 		}
 		return addr.Address

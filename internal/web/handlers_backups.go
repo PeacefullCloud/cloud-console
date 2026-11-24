@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/peaceful/cloud-console/internal/auth"
+	"github.com/peaceful/cloud-console/internal/backups"
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/sshkeys"
 )
@@ -206,6 +208,12 @@ func (s *Server) handleBackupDestinationCreate(w http.ResponseWriter, r *http.Re
 		KeepLast:      keepLast,
 		KeepDaily:     keepDaily,
 		KeepWeekly:    keepWeekly,
+	}
+
+	if err := backups.ValidateDestination(dest, auth.CanAdmin(user.Role)); err != nil {
+		s.App.Activity.Record(user.Username, "Add backup destination", name, kind, err)
+		s.finish(w, r, "/backups", err, "")
+		return
 	}
 
 	if kind == "sftp" {

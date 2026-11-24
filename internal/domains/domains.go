@@ -8,6 +8,8 @@ package domains
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -181,7 +183,7 @@ func (s *Service) Routes(ctx context.Context) ([]caddy.Route, error) {
 
 		routes = append(routes, caddy.Route{
 			Domain:   row.Domain,
-			Upstream: fmt.Sprintf("%s:%d", ip, port),
+			Upstream: net.JoinHostPort(ip, strconv.Itoa(port)),
 		})
 	}
 
@@ -238,7 +240,7 @@ func (s *Service) enrich(ctx context.Context, rows []models.Domain) []Record {
 			Reachable:    ip != "",
 		}
 		if ip != "" {
-			rec.Upstream = fmt.Sprintf("%s:%d", ip, port)
+			rec.Upstream = net.JoinHostPort(ip, strconv.Itoa(port))
 		}
 		out = append(out, rec)
 	}

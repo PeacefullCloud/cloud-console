@@ -39,7 +39,7 @@
         <select name="kind" style="flex:0 0 110px">
           <option value="s3">S3</option>
           <option value="sftp">SFTP</option>
-          <option value="local">Local</option>
+          {{if canAdmin .User}}<option value="local">Local</option>{{end}}
         </select>
         <input type="text" name="repo_url" placeholder="s3:https://endpoint/bucket/prefix or sftp:user@host:23/backups" required style="flex:2 1 300px">
         <input type="password" name="repo_password" placeholder="Repository encryption password" required style="flex:1 1 180px">
@@ -180,7 +180,7 @@
               <span class="pill pill-info" title="A backup operation is still running for this archive">in progress</span>
               {{else}}
               <div class="row-tight">
-                {{if .LocalExists}}
+                {{if or .LocalExists .InS3}}
                 <form method="post" action="/instances/{{.InstanceName}}/backups/{{.Name}}/restore"
                       data-confirm="Restore {{.InstanceName}} from {{.Name}}? The instance is deleted and re-created.">
                   <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

@@ -131,3 +131,11 @@ func (d *DB) DeleteMetricsForInstance(instanceName string) error {
 	_, err := d.sql.Exec(`DELETE FROM metrics WHERE instance_name = ?`, instanceName)
 	return err
 }
+
+// RenameMetrics updates the instance name on historical samples when an
+// instance is renamed.
+func (d *DB) RenameMetrics(oldName, newName string) error {
+	_, err := d.sql.Exec(`UPDATE metrics SET instance_name = ? WHERE instance_name = ?`, newName, oldName)
+	return err
+}
+

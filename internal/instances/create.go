@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -58,9 +60,14 @@ type CreateRequest struct {
 	RootPassword string
 	SSHKey       string
 
+	// Optional first-boot launch script (shell script or #cloud-config).
+	LaunchScript string
+
 	OwnerID   int64
 	OwnerName string
 }
+
+const maxLaunchScriptBytes = 64 * 1024
 
 // createPayload is the JSON stored with an instance.create job.
 type createPayload struct {
@@ -121,6 +128,15 @@ func (r *CreateRequest) Validate() error {
 		if err := ValidateSSHKey(r.SSHKey); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidSpec, err)
 		}
+		r.SSHKey = strings.Join(strings.Fields(r.SSHKey), " ")
+	}
+
+	r.LaunchScript = strings.ReplaceAll(strings.TrimSpace(r.LaunchScript), "\r\n", "\n")
+	if len(r.LaunchScript) > maxLaunchScriptBytes {
+		return fmt.Errorf("%w: launch script must be at most %d KB", ErrInvalidSpec, maxLaunchScriptBytes/1024)
+	}
+	if strings.ContainsRune(r.LaunchScript, 0) {
+		return fmt.Errorf("%w: launch script may not contain null bytes", ErrInvalidSpec)
 	}
 
 	return nil
@@ -133,6 +149,11 @@ func (r *CreateRequest) Validate() error {
 func (s *Service) EnqueueCreate(username string, req CreateRequest) (*models.Job, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
+	}
+	if req.Domain != "" && s.app.Caddy != nil {
+		if host := s.app.Caddy.ConsoleHost(); host != "" && req.Domain == host {
+			return nil, fmt.Errorf("%w: %s is the console's own address", ErrInvalidSpec, req.Domain)
+		}
 	}
 
 	// The quota check and the enqueue form one step: without the lock, two
@@ -208,6 +229,10 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		// Application images run a full stack inside the container.
 		post.Config["security.nesting"] = "true"
 	}
+	if req.LaunchScript != "" {
+		post.Config["cloud-init.user-data"] = req.LaunchScript
+		post.Config["user.user-data"] = req.LaunchScript
+	}
 
 	root := map[string]string{"type": "disk", "path": "/"}
 	if pool != "" {
@@ -225,6 +250,13 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 			return ErrNameInUse
 		}
 		return fmt.Errorf("create instance: %w", err)
+	}
+
+	// 3b. Enable L2/L3 anti-spoofing (MAC, IPv4, IPv6 filtering) on bridged
+	// container NICs when supported by the host bridge so tenants cannot
+	// spoof another instance's IP on incusbr0.
+	if req.Kind == KindContainer {
+		s.applyNICSecurityFilters(ctx, req.Name)
 	}
 
 	// 4. Start it.
@@ -259,6 +291,14 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		consoleDone <- s.EnsureConsoleUser(ctx, req.Name, req.SSHKey, s.app.Cfg.TerminalLoginUser)
 	}()
 
+	var launchDone chan error
+	if req.LaunchScript != "" && !strings.HasPrefix(strings.TrimSpace(req.LaunchScript), "#cloud-config") {
+		launchDone = make(chan error, 1)
+		go func() {
+			launchDone <- s.runLaunchScript(ctx, req.Name, req.LaunchScript)
+		}()
+	}
+
 	// 7. Wait until it has a network address.
 	s.app.Jobs.Progress(job.ID, 70, "Waiting for the network to come up")
 	ip, err := s.WaitForIP(ctx, req.Name, 90*time.Second)
@@ -286,9 +326,16 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 	}
 
 	// 9. Attach the optional domain.
-	if req.Domain != "" {
+	consoleHost := ""
+	if s.app.Caddy != nil {
+		consoleHost = s.app.Caddy.ConsoleHost()
+	}
+	if req.Domain != "" && req.Domain != consoleHost {
 		if _, err := s.app.DB.CreateDomain(req.Name, req.Domain, 80); err != nil {
 			s.app.Log.Warn("could not attach domain", "instance", req.Name, "domain", req.Domain, "err", err)
+		} else if meta.PrimaryHost == "" {
+			meta.PrimaryHost = req.Domain
+			_ = s.app.DB.SetPrimaryHost(req.Name, req.Domain)
 		}
 	}
 
@@ -296,8 +343,13 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 	// when one is configured, so users need no DNS setup to reach it.
 	if base := strings.TrimSpace(s.app.Cfg.PlatformDomain); base != "" {
 		host := req.Name + "." + strings.TrimPrefix(base, "*.")
-		if _, err := s.app.DB.CreateDomain(req.Name, host, 80); err != nil {
-			s.app.Log.Warn("could not attach platform domain", "instance", req.Name, "domain", host, "err", err)
+		if host != consoleHost {
+			if _, err := s.app.DB.CreateDomain(req.Name, host, 80); err != nil {
+				s.app.Log.Warn("could not attach platform domain", "instance", req.Name, "domain", host, "err", err)
+			} else if meta.PrimaryHost == "" {
+				meta.PrimaryHost = host
+				_ = s.app.DB.SetPrimaryHost(req.Name, host)
+			}
 		}
 	}
 
@@ -320,11 +372,39 @@ func (s *Service) handleCreate(ctx context.Context, job *models.Job) error {
 		s.app.Log.Warn("console user setup incomplete", "instance", req.Name, "err", consoleErr)
 		s.app.Jobs.Progress(job.ID, 96, "Web console user setup incomplete: "+consoleErr.Error())
 	}
+	if launchDone != nil {
+		if launchErr := <-launchDone; launchErr != nil {
+			s.app.Log.Warn("launch script failed", "instance", req.Name, "err", launchErr)
+			s.app.Jobs.Progress(job.ID, 98, "Launch script failed: "+launchErr.Error())
+		} else {
+			s.app.Jobs.Progress(job.ID, 98, "Launch script finished")
+		}
+	}
 
 	if ip != "" {
 		s.app.Jobs.Progress(job.ID, 100, "Instance is running at "+ip)
 	}
 	return nil
+}
+
+// runLaunchScript writes and executes a user-supplied shell launch script
+// inside the instance, logging output to /var/log/cloud-console-launch.log.
+func (s *Service) runLaunchScript(ctx context.Context, name, script string) error {
+	script = strings.ReplaceAll(strings.TrimSpace(script), "\r\n", "\n")
+	if script == "" || strings.HasPrefix(script, "#cloud-config") {
+		return nil
+	}
+	if !strings.HasPrefix(script, "#!") {
+		script = "#!/bin/sh\nset -e\n" + script
+	}
+	script += "\n"
+	const scriptPath = "/var/lib/cloud-console-launch.sh"
+	if err := s.app.Incus.PushFile(ctx, name, scriptPath, script, 0, 0, os.FileMode(0o700)); err != nil {
+		return err
+	}
+	_, err := s.app.Incus.Exec(ctx, name, "", "/bin/sh", "-c",
+		scriptPath+" >/var/log/cloud-console-launch.log 2>&1")
+	return err
 }
 
 // WaitForIP polls Incus until the instance reports a routable address.
@@ -388,13 +468,113 @@ func (s *Service) handleRebuild(ctx context.Context, job *models.Job) error {
 		return fmt.Errorf("rebuild instance: %w", err)
 	}
 
-	s.app.Jobs.Progress(job.ID, 90, "Waiting for the instance to come back")
+	if inst, err := s.app.Incus.Instance(payload.Name); err == nil && inst != nil && !strings.EqualFold(inst.Status, "Running") {
+		s.app.Jobs.Progress(job.ID, 40, "Starting rebuilt instance")
+		_ = s.app.Incus.Start(ctx, payload.Name)
+	}
+
+	// Update recorded OS image metadata in SQLite so the UI shows the new OS.
+	ownerID := s.ownerID(payload.Name)
+	if meta, err := s.app.DB.GetInstanceMeta(payload.Name); err == nil {
+		meta.Image = image.Alias
+		meta.ImageLabel = image.Label
+		_ = s.app.DB.SaveInstanceMeta(meta)
+	}
+
+	// Look up the owner's saved SSH public keys so rebuild restores SSH access.
+	var sshKey string
+	if ownerID > 0 {
+		if keys, err := s.app.DB.ListSSHKeysForUser(ownerID); err == nil && len(keys) > 0 {
+			sshKey = keys[0].PublicKey
+		}
+	}
+
+	s.app.Jobs.Progress(job.ID, 55, "Waiting for the guest agent")
+	if err := s.WaitForAgent(ctx, payload.Name, 5*time.Minute); err != nil {
+		s.app.Log.Warn("rebuild: guest agent not ready", "instance", payload.Name, "err", err)
+	}
+
+	// Re-provision SSH and the web terminal user concurrently alongside WaitForIP.
+	s.app.Jobs.Progress(job.ID, 65, "Re-provisioning SSH and console user")
+	sshDone := make(chan error, 1)
+	go func() {
+		if sshKey != "" {
+			sshDone <- s.EnsureSSH(ctx, payload.Name, image, "", sshKey)
+			return
+		}
+		if err := s.ensureSSHServer(ctx, payload.Name, image); err != nil {
+			sshDone <- err
+			return
+		}
+		sshDone <- s.enableSSH(ctx, payload.Name, image, false)
+	}()
+
+	consoleDone := make(chan error, 1)
+	go func() {
+		consoleDone <- s.EnsureConsoleUser(ctx, payload.Name, sshKey, s.app.Cfg.TerminalLoginUser)
+	}()
+
+	s.app.Jobs.Progress(job.ID, 80, "Waiting for the instance to come back")
 	if _, err := s.WaitForIP(ctx, payload.Name, 90*time.Second); err != nil {
 		s.app.Log.Warn("rebuild: instance has no address yet", "instance", payload.Name, "err", err)
 	}
 
+	if err := <-sshDone; err != nil {
+		s.app.Log.Warn("rebuild: ssh provisioning incomplete", "instance", payload.Name, "err", err)
+	}
+	if err := <-consoleDone; err != nil {
+		s.app.Log.Warn("rebuild: console user provisioning incomplete", "instance", payload.Name, "err", err)
+	}
+
 	s.notifyChanged(ctx, payload.Name)
 	return nil
+}
+
+// applyNICSecurityFilters enables MAC, IPv4, and IPv6 spoofing protection on
+// bridged container NICs when supported by the host bridge. If the host kernel
+// lacks bridge netfilter support or uses an unmanaged bridge, it logs and
+// continues without failing instance creation.
+func (s *Service) applyNICSecurityFilters(ctx context.Context, name string) {
+	inst, err := s.app.Incus.Instance(name)
+	if err != nil || inst == nil {
+		return
+	}
+	var nicName string
+	var nicCfg map[string]string
+	for devName, dev := range inst.ExpandedDevices {
+		if dev["type"] == "nic" && (dev["network"] != "" || dev["nictype"] == "bridged") {
+			nicName = devName
+			nicCfg = dev
+			break
+		}
+	}
+	if nicName == "" {
+		return
+	}
+	put := incusapi.InstancePut{
+		Architecture: inst.Architecture,
+		Description:  inst.Description,
+		Profiles:     inst.Profiles,
+		Config:       incusapi.ConfigMap{},
+		Devices:      incusapi.DevicesMap{},
+	}
+	for k, v := range inst.Config {
+		put.Config[k] = v
+	}
+	for k, v := range inst.Devices {
+		put.Devices[k] = v
+	}
+	nic := map[string]string{}
+	for k, v := range nicCfg {
+		nic[k] = v
+	}
+	nic["security.mac_filtering"] = "true"
+	nic["security.ipv4_filtering"] = "true"
+	nic["security.ipv6_filtering"] = "true"
+	put.Devices[nicName] = nic
+	if err := s.app.Incus.UpdateInstance(ctx, name, put); err != nil {
+		s.app.Log.Debug("could not enable NIC anti-spoofing filters", "instance", name, "err", err)
+	}
 }
 
 // --- simple lifecycle operations -----------------------------------------
@@ -483,6 +663,12 @@ func (s *Service) Rename(ctx context.Context, oldName, newName string) error {
 	if err := s.app.DB.RenameBackups(oldName, newName); err != nil {
 		s.app.Log.Warn("could not move backup metadata", "err", err)
 	}
+	if err := s.app.DB.RenameResticSnapshots(oldName, newName); err != nil {
+		s.app.Log.Warn("could not move restic snapshot metadata", "err", err)
+	}
+	if err := s.app.DB.RenameMetrics(oldName, newName); err != nil {
+		s.app.Log.Warn("could not move metrics history", "err", err)
+	}
 	if s.archives != nil {
 		s.archives.InstanceRenamed(oldName, newName)
 	}
@@ -504,6 +690,20 @@ type Limits struct {
 func (s *Service) UpdateLimits(ctx context.Context, name string, lim Limits) error {
 	if err := lim.validate(); err != nil {
 		return err
+	}
+	if s.app != nil && s.app.Incus != nil {
+		if res, err := s.app.Incus.ServerResources(); err == nil && res != nil {
+			var cpuReq, memReq int
+			if lim.CPU != nil {
+				cpuReq = *lim.CPU
+			}
+			if lim.MemoryMB != nil {
+				memReq = *lim.MemoryMB
+			}
+			if err := checkCapacity(CreateRequest{CPU: cpuReq, MemoryMB: memReq}, int(res.CPU.Total), int64(res.Memory.Total)); err != nil {
+				return err
+			}
+		}
 	}
 
 	inst, err := s.app.Incus.Instance(name)
@@ -549,8 +749,8 @@ func (l Limits) validate() error {
 	if l.CPU != nil && (*l.CPU < 0 || *l.CPU > MaxCPU) {
 		return fmt.Errorf("%w: CPU must be between 0 and %d", ErrInvalidSpec, MaxCPU)
 	}
-	if l.MemoryMB != nil && (*l.MemoryMB < 0 || *l.MemoryMB > MaxMemoryMB) {
-		return fmt.Errorf("%w: memory must be between 0 and %d MB", ErrInvalidSpec, MaxMemoryMB)
+	if l.MemoryMB != nil && (*l.MemoryMB < 0 || (*l.MemoryMB > 0 && *l.MemoryMB < MinMemoryMB) || *l.MemoryMB > MaxMemoryMB) {
+		return fmt.Errorf("%w: memory must be 0 or between %d MB and %d MB", ErrInvalidSpec, MinMemoryMB, MaxMemoryMB)
 	}
 	if l.DiskGB != nil && (*l.DiskGB < 0 || *l.DiskGB > MaxDiskGB) {
 		return fmt.Errorf("%w: disk must be between 0 and %d GB", ErrInvalidSpec, MaxDiskGB)
@@ -622,6 +822,226 @@ func limitsPut(inst *incusapi.Instance, lim Limits) (incusapi.InstancePut, error
 		put.Devices["root"] = root
 	}
 	return put, nil
+}
+
+// Allowed mount prefixes for attached data volumes so a tenant cannot mount
+// a volume over /etc, /bin, /usr, /var, /root, /proc, /sys, or /dev.
+var allowedVolumeMountPrefixes = []string{"/mnt/", "/srv/", "/data/", "/opt/"}
+
+func validVolumeMountPath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.Contains(raw, "..") {
+		return "", fmt.Errorf("%w: mount path must be an absolute path under /mnt, /srv, /data, or /opt", ErrInvalidSpec)
+	}
+	cleaned := filepath.Clean(raw)
+	for _, p := range allowedVolumeMountPrefixes {
+		if strings.HasPrefix(cleaned, p) && len(cleaned) > len(p) {
+			return cleaned, nil
+		}
+	}
+	return "", fmt.Errorf("%w: mount path must be under /mnt/, /srv/, /data/, or /opt/ (for example /mnt/data)", ErrInvalidSpec)
+}
+
+// AttachVolume creates a custom storage volume in the instance's storage pool
+// and attaches it at mountPath.
+func (s *Service) AttachVolume(ctx context.Context, instanceName, volName, mountPath string, sizeGB int) error {
+	if s.hasActiveJob(instanceName) {
+		return ErrBusy
+	}
+	volName = strings.ToLower(strings.TrimSpace(volName))
+	if err := ValidateName(volName); err != nil {
+		return fmt.Errorf("%w: volume name: %v", ErrInvalidSpec, err)
+	}
+	if sizeGB < 1 || sizeGB > MaxDiskGB {
+		return fmt.Errorf("%w: volume size must be between 1 GB and %d GB", ErrInvalidSpec, MaxDiskGB)
+	}
+	cleanMount, err := validVolumeMountPath(mountPath)
+	if err != nil {
+		return err
+	}
+
+	inst, err := s.app.Incus.Instance(instanceName)
+	if err != nil {
+		if incus.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	devName := "disk-" + volName
+	if _, exists := inst.Devices[devName]; exists {
+		return fmt.Errorf("%w: a volume named %q is already attached", ErrInvalidSpec, volName)
+	}
+	for _, dev := range inst.ExpandedDevices {
+		if dev["type"] == "disk" && filepath.Clean(dev["path"]) == cleanMount {
+			return fmt.Errorf("%w: another disk is already mounted at %s", ErrInvalidSpec, cleanMount)
+		}
+	}
+
+	pool := ""
+	if root, ok := inst.ExpandedDevices["root"]; ok {
+		pool = root["pool"]
+	}
+	if pool == "" {
+		pool = s.defaultStoragePool()
+	}
+	if pool == "" {
+		return fmt.Errorf("%w: no storage pool is configured", ErrInvalidSpec)
+	}
+
+	fullVolName := instanceName + "-" + volName
+	createdVol := false
+	if err := s.app.Incus.CreateVolume(pool, fullVolName, sizeGB); err != nil {
+		if !incus.IsAlreadyExists(err) {
+			return fmt.Errorf("create volume: %w", err)
+		}
+	} else {
+		createdVol = true
+	}
+
+	put := cloneInstancePut(inst)
+	put.Devices[devName] = map[string]string{
+		"type":   "disk",
+		"pool":   pool,
+		"source": fullVolName,
+		"path":   cleanMount,
+	}
+	if err := s.app.Incus.UpdateInstance(ctx, instanceName, put); err != nil {
+		if createdVol {
+			_ = s.app.Incus.DeleteVolume(pool, fullVolName)
+		}
+		return err
+	}
+	return nil
+}
+
+// DetachVolume removes an attached custom disk device from an instance and
+// optionally deletes the backing custom volume from the storage pool.
+func (s *Service) DetachVolume(ctx context.Context, instanceName, devName string, deleteVol bool) error {
+	if s.hasActiveJob(instanceName) {
+		return ErrBusy
+	}
+	devName = strings.TrimSpace(devName)
+	if devName == "" || devName == "root" {
+		return fmt.Errorf("%w: the root disk cannot be detached", ErrInvalidSpec)
+	}
+
+	inst, err := s.app.Incus.Instance(instanceName)
+	if err != nil {
+		if incus.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	dev, ok := inst.Devices[devName]
+	if !ok || dev["type"] != "disk" {
+		return fmt.Errorf("%w: disk %q is not attached to this instance", ErrInvalidSpec, devName)
+	}
+
+	put := cloneInstancePut(inst)
+	delete(put.Devices, devName)
+	if err := s.app.Incus.UpdateInstance(ctx, instanceName, put); err != nil {
+		return err
+	}
+
+	if deleteVol && dev["pool"] != "" && strings.HasPrefix(dev["source"], instanceName+"-") {
+		_ = s.app.Incus.DeleteVolume(dev["pool"], dev["source"])
+	}
+	return nil
+}
+
+// Port range allowed for per-instance TCP/UDP proxy port forwards.
+const (
+	MinForwardListenPort = 10000
+	MaxForwardListenPort = 60000
+)
+
+// AddPortForward exposes a guest TCP/UDP port on a host port via an Incus
+// proxy device.
+func (s *Service) AddPortForward(ctx context.Context, instanceName, proto string, listenPort, targetPort int) error {
+	if s.hasActiveJob(instanceName) {
+		return ErrBusy
+	}
+	proto = strings.ToLower(strings.TrimSpace(proto))
+	if proto != "tcp" && proto != "udp" {
+		return fmt.Errorf("%w: protocol must be tcp or udp", ErrInvalidSpec)
+	}
+	if listenPort < MinForwardListenPort || listenPort > MaxForwardListenPort {
+		return fmt.Errorf("%w: external port must be between %d and %d", ErrInvalidSpec, MinForwardListenPort, MaxForwardListenPort)
+	}
+	if targetPort < 1 || targetPort > 65535 {
+		return fmt.Errorf("%w: instance port must be between 1 and 65535", ErrInvalidSpec)
+	}
+
+	inst, err := s.app.Incus.Instance(instanceName)
+	if err != nil {
+		if incus.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	listenSpec := fmt.Sprintf("%s:0.0.0.0:%d", proto, listenPort)
+	if all, lerr := s.app.Incus.Instances(ctx); lerr == nil {
+		for _, other := range all {
+			for _, dev := range other.ExpandedDevices {
+				if dev["type"] == "proxy" && strings.EqualFold(dev["listen"], listenSpec) {
+					return fmt.Errorf("%w: %s port %d is already forwarded", ErrInvalidSpec, strings.ToUpper(proto), listenPort)
+				}
+			}
+		}
+	}
+
+	devName := fmt.Sprintf("port-%s-%d", proto, listenPort)
+	put := cloneInstancePut(inst)
+	put.Devices[devName] = map[string]string{
+		"type":    "proxy",
+		"listen":  listenSpec,
+		"connect": fmt.Sprintf("%s:127.0.0.1:%d", proto, targetPort),
+	}
+	return s.app.Incus.UpdateInstance(ctx, instanceName, put)
+}
+
+// RemovePortForward removes a TCP/UDP proxy port forward from an instance.
+func (s *Service) RemovePortForward(ctx context.Context, instanceName, devName string) error {
+	if s.hasActiveJob(instanceName) {
+		return ErrBusy
+	}
+	inst, err := s.app.Incus.Instance(instanceName)
+	if err != nil {
+		if incus.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	dev, ok := inst.Devices[devName]
+	if !ok || dev["type"] != "proxy" {
+		return fmt.Errorf("%w: port forward %q was not found", ErrInvalidSpec, devName)
+	}
+	put := cloneInstancePut(inst)
+	delete(put.Devices, devName)
+	return s.app.Incus.UpdateInstance(ctx, instanceName, put)
+}
+
+func cloneInstancePut(inst *incusapi.Instance) incusapi.InstancePut {
+	put := incusapi.InstancePut{
+		Architecture: inst.Architecture,
+		Description:  inst.Description,
+		Profiles:     append([]string(nil), inst.Profiles...),
+		Config:       incusapi.ConfigMap{},
+		Devices:      incusapi.DevicesMap{},
+	}
+	for k, v := range inst.Config {
+		put.Config[k] = v
+	}
+	for k, v := range inst.Devices {
+		devCopy := make(map[string]string, len(v))
+		for dk, dv := range v {
+			devCopy[dk] = dv
+		}
+		put.Devices[k] = devCopy
+	}
+	return put
 }
 
 // defaultStoragePool picks the pool to use when the caller does not choose one.

@@ -231,6 +231,7 @@ func run() error {
 	if h := cfg.SnapshotIntervalHours; h > 0 {
 		log.Info("scheduled snapshots enabled", "every_hours", h, "keep", cfg.SnapshotKeep)
 		scheduler := snapshots.NewScheduler(app.Incus, db, log, time.Duration(h)*time.Hour, cfg.SnapshotKeep)
+		scheduler.SetOffsiteHook(backupsService.EnqueueScheduledRestic)
 		go scheduler.Run(ctx)
 	}
 	go housekeeping(ctx, db, log)

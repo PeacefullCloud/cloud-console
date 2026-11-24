@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -91,18 +92,126 @@ func (s *Service) buildResticEnv(dest *models.BackupDestination, instanceName st
 	return env
 }
 
+// ValidateDestination checks a Restic backup destination for injection, path
+// traversal, and SSRF before it is saved or executed.
+func ValidateDestination(dest *models.BackupDestination, isAdmin bool) error {
+	if dest == nil {
+		return errors.New("destination is required")
+	}
+	if strings.TrimSpace(dest.Name) == "" {
+		return errors.New("destination name is required")
+	}
+	if strings.ContainsAny(dest.RepoURL, "\x00\r\n") {
+		return errors.New("invalid characters in repository URL")
+	}
+	switch dest.Kind {
+	case "sftp":
+		if _, _, err := parseSFTPRepo(dest.RepoURL); err != nil {
+			return err
+		}
+		if strings.ContainsAny(dest.SSHKnownHosts, "\x00\r") {
+			return errors.New("invalid characters in SSH known_hosts")
+		}
+		return nil
+	case "s3":
+		return validateS3Repo(dest.RepoURL, isAdmin)
+	case "local":
+		if !isAdmin {
+			return errors.New("only administrators may configure local host-filesystem backup destinations")
+		}
+		return validateLocalRepo(dest.RepoURL)
+	default:
+		return errors.New("destination kind must be s3, sftp or local")
+	}
+}
+
+func validateLocalRepo(repoURL string) error {
+	raw := strings.TrimSpace(repoURL)
+	if raw == "" || !filepath.IsAbs(raw) {
+		return errors.New("local repository path must be an absolute path")
+	}
+	clean := filepath.Clean(raw)
+	if clean != strings.TrimRight(raw, "/") && clean != raw {
+		return errors.New("local repository path must not contain relative segments")
+	}
+	for _, forbidden := range []string{"/", "/etc", "/bin", "/sbin", "/usr", "/lib", "/lib64", "/proc", "/sys", "/dev", "/boot", "/root", "/run"} {
+		if clean == forbidden || strings.HasPrefix(clean, forbidden+"/") {
+			return fmt.Errorf("local repository path %q is in a restricted system directory", clean)
+		}
+	}
+	return nil
+}
+
+func validateS3Repo(repoURL string, isAdmin bool) error {
+	raw := strings.TrimSpace(repoURL)
+	if !strings.HasPrefix(raw, "s3:") {
+		return errors.New("S3 repository URL must start with s3:")
+	}
+	rest := strings.TrimPrefix(raw, "s3:")
+	if rest == "" {
+		return errors.New("S3 repository URL is missing endpoint and bucket")
+	}
+	parseTarget := rest
+	if !strings.HasPrefix(parseTarget, "http://") && !strings.HasPrefix(parseTarget, "https://") {
+		parseTarget = "https://" + parseTarget
+	}
+	u, err := url.Parse(parseTarget)
+	if err != nil || u.Hostname() == "" {
+		return errors.New("invalid S3 repository URL")
+	}
+	if strings.Trim(u.Path, "/") == "" {
+		return errors.New("S3 repository URL must include a bucket name")
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "metadata.google.internal" || host == "metadata" {
+		return errors.New("S3 repository host is not allowed")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return errors.New("S3 repository IP address is not allowed")
+		}
+		if !isAdmin && ip.IsPrivate() {
+			return errors.New("private S3 endpoint addresses require administrator privileges")
+		}
+	}
+	return nil
+}
+
+func validSSHIdentifier(s string, allowDots bool) bool {
+	if s == "" || strings.HasPrefix(s, "-") {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '_' || c == '-':
+		case allowDots && c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // parseSFTPRepo extracts user, host, port from a restic SFTP repository URL
 // (e.g., "sftp:user@host:23/path" or "sftp://user@host:22/path").
 func parseSFTPRepo(repoURL string) (userHost, port string, err error) {
 	raw := strings.TrimSpace(repoURL)
+	if strings.ContainsAny(raw, " \t\r\n'\"$`\\;&|<>\x00") {
+		return "", "", fmt.Errorf("invalid characters in SFTP repository URL")
+	}
+	var user, hostPart, repoPath string
 	switch {
 	case strings.HasPrefix(raw, "sftp://"):
 		u, perr := url.Parse(raw)
 		if perr != nil || u.Hostname() == "" || u.User == nil || u.User.Username() == "" {
 			return "", "", fmt.Errorf("invalid SFTP repository URL")
 		}
-		userHost = u.User.Username() + "@" + u.Hostname()
+		user = u.User.Username()
+		hostPart = u.Hostname()
 		port = u.Port()
+		repoPath = u.Path
 	case strings.HasPrefix(raw, "sftp:"):
 		rest := strings.TrimPrefix(raw, "sftp:")
 		// Split user@host[:port][:path|/path]
@@ -110,27 +219,41 @@ func parseSFTPRepo(repoURL string) (userHost, port string, err error) {
 		if at <= 0 {
 			return "", "", fmt.Errorf("SFTP repository URL must include user@host")
 		}
-		user := rest[:at]
+		user = rest[:at]
 		afterUser := rest[at+1:]
-		hostPart := afterUser
+		hostPart = afterUser
 		if slash := strings.IndexByte(afterUser, '/'); slash >= 0 {
 			hostPart = afterUser[:slash]
+			repoPath = afterUser[slash:]
 		}
 		if colon := strings.IndexByte(hostPart, ':'); colon >= 0 {
-			port = hostPart[colon+1:]
+			tail := hostPart[colon+1:]
 			hostPart = hostPart[:colon]
+			if _, perr := strconv.Atoi(tail); perr == nil {
+				port = tail
+			} else if repoPath == "" {
+				repoPath = tail
+			} else {
+				port = tail
+			}
 		}
 		if hostPart == "" {
 			return "", "", fmt.Errorf("SFTP repository URL is missing host")
 		}
-		userHost = user + "@" + hostPart
 	default:
 		return "", "", fmt.Errorf("not an SFTP repository URL")
 	}
 
-	if strings.ContainsAny(userHost, " \t\r\n'\"$`\\;&|<>") {
-		return "", "", fmt.Errorf("invalid characters in SFTP user or host")
+	if !validSSHIdentifier(user, true) {
+		return "", "", fmt.Errorf("invalid SFTP username")
 	}
+	if strings.HasPrefix(hostPart, "-") || (!validSSHIdentifier(hostPart, true) && net.ParseIP(hostPart) == nil) {
+		return "", "", fmt.Errorf("invalid SFTP host")
+	}
+	if strings.Trim(repoPath, "/") == "" {
+		return "", "", fmt.Errorf("SFTP repository URL must include a path")
+	}
+	userHost = user + "@" + hostPart
 	if port != "" {
 		p, perr := strconv.Atoi(port)
 		if perr != nil || p < 1 || p > 65535 {
@@ -182,7 +305,7 @@ func prepareSFTPOpts(dest *models.BackupDestination) ([]string, func(), error) {
 	if port != "" {
 		args = append(args, "-p", port)
 	}
-	args = append(args, userHost, "-s", "sftp")
+	args = append(args, "--", userHost, "-s", "sftp")
 
 	return []string{"-o", "sftp.command=" + strings.Join(args, " ")}, cleanup, nil
 }
@@ -217,6 +340,9 @@ func mapResticError(err error, stderr string) error {
 }
 
 func (s *Service) runRestic(ctx context.Context, dest *models.BackupDestination, instanceName string, args ...string) ([]byte, error) {
+	if err := ValidateDestination(dest, true); err != nil {
+		return nil, err
+	}
 	cacheDir := s.resticCacheDir(dest.ID, instanceName)
 	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return nil, err
@@ -282,6 +408,42 @@ func (s *Service) EnqueueResticBackup(username, instanceName string, destination
 	return s.app.Jobs.Enqueue(s.ownerOf(instanceName), username, JobResticBackup, instanceName, string(payload))
 }
 
+// EnqueueScheduledRestic enqueues an automatic Restic backup for instanceName
+// when its owner has configured at least one Restic destination and no job is
+// currently running for the instance.
+func (s *Service) EnqueueScheduledRestic(instanceName string) {
+	if s.app == nil || s.app.DB == nil || s.app.Jobs == nil {
+		return
+	}
+	if jobs, err := s.app.DB.ListActiveJobs(); err == nil {
+		for _, j := range jobs {
+			if j.Target == instanceName {
+				return
+			}
+		}
+	}
+	ownerID := s.ownerOf(instanceName)
+	if ownerID <= 0 {
+		return
+	}
+	dests, err := s.app.DB.ListBackupDestinationsScoped(models.Scope{UserID: ownerID})
+	if err != nil || len(dests) == 0 {
+		return
+	}
+	name := "auto-" + SuggestName(instanceName, time.Now())
+	_, _ = s.EnqueueResticBackup("scheduler", instanceName, dests[0].ID, name)
+}
+
+func snapshotSourceInstance(snap *models.ResticSnapshot) string {
+	if snap.RepoPrefix != "" {
+		trimmed := strings.TrimRight(snap.RepoPrefix, "/")
+		if idx := strings.LastIndexByte(trimmed, '/'); idx >= 0 && idx+1 < len(trimmed) {
+			return trimmed[idx+1:]
+		}
+	}
+	return snap.InstanceName
+}
+
 // EnqueueResticRestore schedules a streaming restore from Restic directly into
 // Incus.
 func (s *Service) EnqueueResticRestore(username string, snapshotRowID int64, targetInstance string) (*models.Job, error) {
@@ -289,21 +451,30 @@ func (s *Service) EnqueueResticRestore(username string, snapshotRowID int64, tar
 	if err != nil {
 		return nil, ErrNotFound
 	}
+	dest, err := s.app.DB.GetBackupDestination(snap.DestinationID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
 	targetInstance = strings.TrimSpace(targetInstance)
 	if targetInstance == "" {
 		targetInstance = snap.InstanceName
 	}
+	sourceInstance := snapshotSourceInstance(snap)
 	payload, err := json.Marshal(resticRestorePayload{
 		SnapshotRowID:  snap.ID,
 		DestinationID:  snap.DestinationID,
-		SourceInstance: snap.InstanceName,
+		SourceInstance: sourceInstance,
 		TargetInstance: targetInstance,
 		SnapshotID:     snap.SnapshotID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.app.Jobs.Enqueue(s.ownerOf(snap.InstanceName), username, JobResticRestore, targetInstance, string(payload))
+	ownerID := s.ownerOf(targetInstance)
+	if ownerID == 0 {
+		ownerID = dest.UserID
+	}
+	return s.app.Jobs.Enqueue(ownerID, username, JobResticRestore, targetInstance, string(payload))
 }
 
 // EnqueueResticPrune schedules `restic forget --prune` using the destination's
@@ -354,7 +525,8 @@ func (s *Service) DeleteResticSnapshot(ctx context.Context, snapshotRowID int64)
 	if err != nil {
 		return err
 	}
-	if _, err := s.runRestic(ctx, dest, snap.InstanceName, "forget", snap.SnapshotID, "--prune", "--json"); err != nil {
+	sourceInstance := snapshotSourceInstance(snap)
+	if _, err := s.runRestic(ctx, dest, sourceInstance, "forget", snap.SnapshotID, "--prune", "--json"); err != nil {
 		return err
 	}
 	return s.app.DB.DeleteResticSnapshot(snap.ID)
@@ -556,6 +728,22 @@ func (s *Service) handleResticRestore(ctx context.Context, job *models.Job) erro
 	}
 	if outcome.StartErr != nil {
 		s.app.Log.Warn("restored instance did not start", "instance", p.TargetInstance, "err", outcome.StartErr)
+	}
+	// If the instance had been deleted before this restore, recreate its
+	// console ownership record so the tenant can access the restored instance.
+	if _, merr := s.app.DB.GetInstanceMeta(p.TargetInstance); merr != nil {
+		ownerID := job.OwnerID
+		if ownerID == 0 {
+			ownerID = dest.UserID
+		}
+		meta := &models.InstanceMeta{
+			Name:    p.TargetInstance,
+			OwnerID: ownerID,
+		}
+		if inst, ierr := s.app.Incus.Instance(p.TargetInstance); ierr == nil && inst != nil {
+			meta.Kind = string(inst.Type)
+		}
+		_ = s.app.DB.SaveInstanceMeta(meta)
 	}
 	if s.notifier != nil {
 		s.notifier.InstanceChanged(ctx, p.TargetInstance)

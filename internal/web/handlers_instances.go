@@ -323,6 +323,7 @@ func (s *Server) handleCreateSubmit(w http.ResponseWriter, r *http.Request) {
 		Kind:         strings.TrimSpace(r.FormValue("kind")),
 		RootPassword: r.FormValue("root_password"),
 		SSHKey:       strings.TrimSpace(r.FormValue("ssh_key")),
+		LaunchScript: r.FormValue("launch_script"),
 		Domain:       strings.TrimSpace(r.FormValue("domain")),
 		Notes:        strings.TrimSpace(r.FormValue("notes")),
 		StoragePool:  r.FormValue("storage_pool"),
@@ -517,6 +518,7 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 
 	if tab == "networking" {
 		data.Networks = s.networkDevices(name)
+		data.PortForwards = s.portForwards(name)
 	}
 
 	// Ownership is an administrator concern; tenants never see the picker.
@@ -759,6 +761,11 @@ func (s *Server) handleInstanceLimits(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = checkWriteAccess(r)
 	}
+	if err == nil && checkAdminAccess(r) != nil {
+		if (limits.CPU != nil && *limits.CPU == 0) || (limits.MemoryMB != nil && *limits.MemoryMB == 0) {
+			err = errors.New("only administrators may remove CPU or memory limits")
+		}
+	}
 	if err == nil {
 		ctx, cancel := operationContext(r)
 		defer cancel()
@@ -824,6 +831,9 @@ func (s *Server) handleInstanceOwner(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := operationContext(r)
 		defer cancel()
 		err = s.Instances.SetOwner(ctx, name, ownerID)
+		if err == nil {
+			s.revokeInstanceSessions(name)
+		}
 	}
 
 	detail := "unassigned"
@@ -833,6 +843,79 @@ func (s *Server) handleInstanceOwner(w http.ResponseWriter, r *http.Request) {
 	s.App.Activity.Record(username, "Change instance owner", name, detail, err)
 
 	s.finish(w, r, fallback, err, "Ownership updated.")
+}
+
+func (s *Server) handleVolumeAttach(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	volName := strings.ToLower(strings.TrimSpace(r.FormValue("volume_name")))
+	mountPath := strings.TrimSpace(r.FormValue("mount_path"))
+	sizeGB := atoiDefault(r.FormValue("size_gb"), 10)
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=storage"
+
+	err := checkWriteAccess(r)
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.AttachVolume(ctx, name, volName, mountPath, sizeGB)
+	}
+	s.App.Activity.Record(username, "Attach volume", name, volName+" at "+mountPath, err)
+	s.finish(w, r, fallback, err, "Attached volume "+volName+" at "+mountPath+".")
+}
+
+func (s *Server) handleVolumeDetach(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	devName := r.PathValue("dev")
+	deleteVol := r.FormValue("delete_volume") == "1"
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=storage"
+
+	err := checkWriteAccess(r)
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.DetachVolume(ctx, name, devName, deleteVol)
+	}
+	s.App.Activity.Record(username, "Detach volume", name, devName, err)
+	s.finish(w, r, fallback, err, "Detached "+devName+".")
+}
+
+func (s *Server) handlePortForwardAdd(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	proto := strings.ToLower(strings.TrimSpace(r.FormValue("protocol")))
+	if proto == "" {
+		proto = "tcp"
+	}
+	listenPort := atoiDefault(r.FormValue("listen_port"), 0)
+	targetPort := atoiDefault(r.FormValue("target_port"), 0)
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=networking"
+
+	err := checkWriteAccess(r)
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.AddPortForward(ctx, name, proto, listenPort, targetPort)
+	}
+	detail := strings.ToUpper(proto) + " " + strconv.Itoa(listenPort) + " -> " + strconv.Itoa(targetPort)
+	s.App.Activity.Record(username, "Add port forward", name, detail, err)
+	s.finish(w, r, fallback, err, "Forwarded "+detail+".")
+}
+
+func (s *Server) handlePortForwardDelete(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	devName := r.PathValue("dev")
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=networking"
+
+	err := checkWriteAccess(r)
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.RemovePortForward(ctx, name, devName)
+	}
+	s.App.Activity.Record(username, "Remove port forward", name, devName, err)
+	s.finish(w, r, fallback, err, "Removed port forward "+devName+".")
 }
 
 // InstanceURL builds the canonical instance page path.

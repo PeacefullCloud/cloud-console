@@ -4,6 +4,7 @@ package config
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // DefaultIncusSocket is where the Incus daemon listens on a standard
@@ -350,7 +353,9 @@ func (c *Config) CaddyConfigured() bool {
 func (c *Config) SSOKeySet() bool { return len(c.SSOKey) == 32 }
 
 // ssoKey derives a 32-byte encryption key from CONSOLE_SSO_KEY: 64 hex
-// characters are used directly, any other non-empty value is SHA-256 hashed.
+// characters or 32-byte base64 are used directly; an "argon2:" prefix derives
+// the key with Argon2id; other values fall back to SHA-256 for backwards
+// compatibility with existing sealed SSO records.
 func ssoKey(raw string) []byte {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -358,6 +363,13 @@ func ssoKey(raw string) []byte {
 	}
 	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
 		return decoded
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return decoded
+	}
+	if strings.HasPrefix(raw, "argon2:") {
+		pass := strings.TrimPrefix(raw, "argon2:")
+		return argon2.IDKey([]byte(pass), []byte("peaceful-cloud-console-sso-v1"), 1, 64*1024, 4, 32)
 	}
 	sum := sha256.Sum256([]byte(raw))
 	return sum[:]

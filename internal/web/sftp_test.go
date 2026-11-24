@@ -122,3 +122,24 @@ func TestSFTPRevocationIsPerUser(t *testing.T) {
 		t.Fatal("other tenant's session was revoked")
 	}
 }
+
+func TestSFTPMultiInstanceIsolationPerToken(t *testing.T) {
+	s := newTestServer(t)
+	s.sftpSessions = map[string]*sftpSession{}
+	var boxAClosed, boxBClosed atomic.Int32
+
+	keyA := sftpSessionKey("hash1", "box-a")
+	keyB := sftpSessionKey("hash1", "box-b")
+	s.sftpSessions[keyA] = &sftpSession{userID: 1, tokenHash: "hash1", instance: "box-a", wsCancel: func() { boxAClosed.Add(1) }}
+	s.sftpSessions[keyB] = &sftpSession{userID: 1, tokenHash: "hash1", instance: "box-b", wsCancel: func() { boxBClosed.Add(1) }}
+
+	// Closing box-b's tab must not tear down box-a's SFTP session.
+	s.closeSFTP("hash1", "box-b")
+	if boxAClosed.Load() != 0 || boxBClosed.Load() != 1 {
+		t.Fatalf("closed box-a=%d box-b=%d, want 0 and 1", boxAClosed.Load(), boxBClosed.Load())
+	}
+	if _, ok := s.sftpSessions[keyA]; !ok {
+		t.Fatal("box-a session should remain active")
+	}
+}
+

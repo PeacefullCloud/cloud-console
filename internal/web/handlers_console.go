@@ -15,7 +15,17 @@ import (
 	"github.com/gorilla/websocket"
 	incusclient "github.com/lxc/incus/v6/client"
 	incusapi "github.com/lxc/incus/v6/shared/api"
+
+	"github.com/peaceful/cloud-console/internal/auth"
+	"github.com/peaceful/cloud-console/internal/database"
 )
+
+type consoleHandle struct {
+	userID    int64
+	tokenHash string
+	instance  string
+	cancel    context.CancelFunc
+}
 
 // Wire protocol, shared verbatim with the wterm client in static/console.js.
 // The transport encodes every string as a binary frame, so the first byte
@@ -169,13 +179,17 @@ func (s *Server) handleConsoleSocket(w http.ResponseWriter, r *http.Request) {
 	stopOnShutdown := context.AfterFunc(shutdownCtx, stop)
 	defer stopOnShutdown()
 
-	s.serveConsole(conn, ctx, name, user.Username, cols, rows)
+	token := tokenFrom(r)
+	handleID := s.registerConsoleHandle(user.ID, auth.HashToken(token), name, stop)
+	defer s.unregisterConsoleHandle(handleID)
+
+	s.serveConsole(conn, ctx, name, user.ID, user.Username, token, cols, rows)
 }
 
 // serveConsole owns everything after the websocket upgrade. It returns only
 // when the browser disconnects, the shell exits, a limit is hit, or the server
 // shuts down; every goroutine and pipe is cleaned up before it returns.
-func (s *Server) serveConsole(conn *websocket.Conn, parent context.Context, name, username string, cols, rows int) {
+func (s *Server) serveConsole(conn *websocket.Conn, parent context.Context, name string, userID int64, username, token string, cols, rows int) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	started := time.Now()
@@ -383,6 +397,22 @@ exec /bin/sh -l`
 				done <- "shutdown"
 				return
 			case <-ticker.C:
+				if token != "" && s.App != nil && s.App.Auth != nil {
+					u, aerr := s.App.Auth.Authenticate(token)
+					if aerr != nil || u == nil || u.ID != userID || !auth.CanWrite(u.Role) {
+						say("\r\n\x1b[31mConsole session expired or revoked — disconnecting.\x1b[0m\r\n")
+						done <- "session-revoked"
+						return
+					}
+					if !auth.CanAdmin(u.Role) && s.App.DB != nil {
+						meta, merr := s.App.DB.GetInstanceMeta(name)
+						if merr != nil || meta.OwnerID != u.ID {
+							say("\r\n\x1b[31mInstance access revoked — disconnecting.\x1b[0m\r\n")
+							done <- "access-revoked"
+							return
+						}
+					}
+				}
 				now := time.Now()
 				if limit := s.App.Cfg.TerminalMaxSession; limit > 0 && now.Sub(started) >= limit {
 					say("\r\n\x1b[33mMaximum session time reached — disconnecting.\x1b[0m\r\n")
@@ -497,5 +527,86 @@ func (s *Server) consoleRelease(userID int64) {
 	}
 	if s.consoleByUser[userID] > 0 {
 		s.consoleByUser[userID]--
+	}
+}
+
+func (s *Server) registerConsoleHandle(userID int64, tokenHash, instance string, cancel context.CancelFunc) uint64 {
+	s.consoleMu.Lock()
+	defer s.consoleMu.Unlock()
+	if s.consoleActive == nil {
+		s.consoleActive = map[uint64]*consoleHandle{}
+	}
+	s.consoleNextID++
+	id := s.consoleNextID
+	s.consoleActive[id] = &consoleHandle{
+		userID:    userID,
+		tokenHash: tokenHash,
+		instance:  instance,
+		cancel:    cancel,
+	}
+	return id
+}
+
+func (s *Server) unregisterConsoleHandle(id uint64) {
+	s.consoleMu.Lock()
+	delete(s.consoleActive, id)
+	s.consoleMu.Unlock()
+}
+
+func (s *Server) revokeConsoleUser(userID int64, exceptHash string) {
+	s.consoleMu.Lock()
+	var cancels []context.CancelFunc
+	for id, h := range s.consoleActive {
+		if h.userID == userID && h.tokenHash != exceptHash {
+			cancels = append(cancels, h.cancel)
+			delete(s.consoleActive, id)
+		}
+	}
+	s.consoleMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
+func (s *Server) revokeConsoleHandle(handle string) {
+	s.consoleMu.Lock()
+	var cancels []context.CancelFunc
+	for id, h := range s.consoleActive {
+		if database.SessionHandle(h.tokenHash) == handle {
+			cancels = append(cancels, h.cancel)
+			delete(s.consoleActive, id)
+		}
+	}
+	s.consoleMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
+func (s *Server) revokeInstanceSessions(instance string) {
+	s.consoleMu.Lock()
+	var cancels []context.CancelFunc
+	for id, h := range s.consoleActive {
+		if h.instance == instance {
+			cancels = append(cancels, h.cancel)
+			delete(s.consoleActive, id)
+		}
+	}
+	s.consoleMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+
+	s.sftpMu.Lock()
+	var dead []*sftpSession
+	for k, sess := range s.sftpSessions {
+		if sess.instance == instance {
+			dead = append(dead, sess)
+			delete(s.sftpSessions, k)
+		}
+	}
+	s.sftpMu.Unlock()
+	for _, sess := range dead {
+		sess.shutdown()
 	}
 }
