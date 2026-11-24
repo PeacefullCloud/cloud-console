@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,4 +170,36 @@ func TestLiveSFTPLargeStreamingDownload(t *testing.T) {
 		t.Fatalf("hash mismatch: got %x want %x, len %d/%d", gotHash, want, len(got), len(payload))
 	}
 	t.Logf("download %d bytes ok", len(got))
+
+	// Also verify the direct HTTP streaming download endpoint.
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		r.SetPathValue("name", "testing101")
+		r = r.WithContext(context.WithValue(r.Context(), userKey{}, user))
+		r = r.WithContext(context.WithValue(r.Context(), tokenKey{}, token))
+		s.handleSFTPDownload(w, r)
+	})
+	resp, err := http.Get(ts.URL + "/download?path=" + url.QueryEscape("/home/cloud-user/"+name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("http download status = %d", resp.StatusCode)
+	}
+	httpBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if httpHash := sha256.Sum256(httpBody); httpHash != want {
+		t.Fatalf("http download hash mismatch: got %x want %x, len %d/%d", httpHash, want, len(httpBody), len(payload))
+	}
+	// Path outside home must be rejected.
+	badResp, err := http.Get(ts.URL + "/download?path=" + url.QueryEscape("/etc/passwd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("outside home status = %d, want 403", badResp.StatusCode)
+	}
 }

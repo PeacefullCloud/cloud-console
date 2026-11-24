@@ -14,9 +14,135 @@
   {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 
   {{if not .S3Enabled}}
+  {{if not .ResticDestinations}}
   <div class="flash flash-warn">
-    No S3-compatible target is configured. Backups stay on this server, which is not an independent copy.
-    Configure it in <a href="/settings">Settings</a>.
+    No off-site backup destination is configured yet. Add an S3 or SFTP Restic destination below for encrypted, deduplicated off-site backups.
+  </div>
+  {{end}}
+  {{end}}
+
+  <div class="card mb-16">
+    <div class="card-head">
+      <div class="grow">
+        <div class="card-title">Backup Destinations (Restic)</div>
+        <p class="card-sub">
+          Bring your own S3-compatible bucket or SFTP server. Backups stream uncompressed directly into Restic with zstd compression, client-side encryption, and content-defined deduplication.
+        </p>
+      </div>
+    </div>
+
+    {{if canWrite .User}}
+    <form method="post" action="/backups/destinations" class="mt-12">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <div class="row-wrap">
+        <input type="text" name="name" placeholder="Destination name (e.g. Hetzner Box)" required style="flex:1 1 180px">
+        <select name="kind" style="flex:0 0 110px">
+          <option value="s3">S3</option>
+          <option value="sftp">SFTP</option>
+          <option value="local">Local</option>
+        </select>
+        <input type="text" name="repo_url" placeholder="s3:https://endpoint/bucket/prefix or sftp:user@host:23/backups" required style="flex:2 1 300px">
+        <input type="password" name="repo_password" placeholder="Repository encryption password" required style="flex:1 1 180px">
+      </div>
+      <div class="row-wrap mt-8">
+        <input type="text" name="s3_access_key" placeholder="S3 Access Key (if S3)" style="flex:1 1 150px">
+        <input type="password" name="s3_secret_key" placeholder="S3 Secret Key (if S3)" style="flex:1 1 150px">
+        <input type="text" name="s3_region" placeholder="S3 Region (optional)" style="flex:0 1 130px">
+        <input type="number" name="keep_last" value="7" min="1" title="Keep last N snapshots" style="width:70px">
+        <input type="number" name="keep_daily" value="7" min="0" title="Keep daily snapshots" style="width:70px">
+        <input type="number" name="keep_weekly" value="4" min="0" title="Keep weekly snapshots" style="width:70px">
+        <button class="btn btn-primary" type="submit">Add destination</button>
+      </div>
+      <p class="hint mt-8">For SFTP destinations, an Ed25519 SSH keypair is generated automatically; paste its public key into your storage server's <code>authorized_keys</code>.</p>
+    </form>
+    {{end}}
+
+    {{if .ResticDestinations}}
+    <div class="table-wrap mt-16">
+      <table class="table">
+        <thead>
+          <tr><th>Destination</th><th>Type</th><th>Repository</th><th>Retention</th><th>Last check</th><th class="tight"></th></tr>
+        </thead>
+        <tbody>
+          {{range .ResticDestinations}}
+          <tr>
+            <td>
+              <div class="snap-name">{{.Name}}</div>
+              {{if .SSHPublicKey}}
+              <div class="snap-meta mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{.SSHPublicKey}}">SSH pub: {{.SSHPublicKey}}</div>
+              {{end}}
+            </td>
+            <td><span class="pill pill-info">{{.Kind}}</span></td>
+            <td class="mono muted">{{.RepoURL}}</td>
+            <td class="muted nowrap">{{.KeepLast}}L / {{.KeepDaily}}D / {{.KeepWeekly}}W</td>
+            <td class="muted nowrap">{{if .LastCheckStatus}}{{.LastCheckStatus}}{{else}}never{{end}}</td>
+            <td>
+              {{if canWrite $.User}}
+              <div class="row-tight">
+                <form method="post" action="/backups/destinations/{{.ID}}/check">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm" type="submit" title="Verify 5% of repository data">Verify</button>
+                </form>
+                <form method="post" action="/backups/destinations/{{.ID}}/prune" data-confirm="Prune old snapshots in {{.Name}} according to its retention policy?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm" type="submit">Prune</button>
+                </form>
+                <form method="post" action="/backups/destinations/{{.ID}}/delete" data-confirm="Remove destination {{.Name}} from the console? Remote data is kept.">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm btn-danger" type="submit">Remove</button>
+                </form>
+              </div>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+  </div>
+
+  {{if .ResticSnapshots}}
+  <div class="card mb-16">
+    <div class="card-head">
+      <div class="grow">
+        <div class="card-title">Restic Snapshots</div>
+        <p class="card-sub">Deduplicated, encrypted off-site snapshots.</p>
+      </div>
+    </div>
+    <div class="table-wrap mt-12">
+      <table class="table">
+        <thead>
+          <tr><th>Snapshot</th><th>Instance</th><th>Destination</th><th>Created</th><th class="num">Size</th><th class="num">Added</th><th class="tight"></th></tr>
+        </thead>
+        <tbody>
+          {{range .ResticSnapshots}}
+          <tr>
+            <td><span class="mono">{{.SnapshotID}}</span> {{if .BackupName}}<span class="muted">({{.BackupName}})</span>{{end}}</td>
+            <td><a href="/instances/{{.InstanceName}}?tab=backups">{{.InstanceName}}</a></td>
+            <td>{{.DestinationName}} <span class="pill">{{.DestinationKind}}</span></td>
+            <td class="muted nowrap">{{date .CreatedAt}}</td>
+            <td class="num">{{bytes .SizeBytes}}</td>
+            <td class="num muted">{{bytes .DataAddedBytes}}</td>
+            <td>
+              {{if canWrite $.User}}
+              <div class="row-tight">
+                <form method="post" action="/instances/{{.InstanceName}}/restic/{{.ID}}/restore" data-confirm="Restore {{.InstanceName}} from Restic snapshot {{.SnapshotID}}?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm" type="submit">Restore</button>
+                </form>
+                <form method="post" action="/instances/{{.InstanceName}}/restic/{{.ID}}/delete" data-confirm="Delete Restic snapshot {{.SnapshotID}} from {{.DestinationName}}?">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
   </div>
   {{end}}
 

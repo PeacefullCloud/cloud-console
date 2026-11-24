@@ -7,6 +7,7 @@
   var panel = document.getElementById("sftp-panel");
   if (!panel) { return; }
   var wsPath = document.body.getAttribute("data-sftp-ws-path");
+  var downloadPath = wsPath ? wsPath.replace(/\/ws$/, "/download") : "";
 
   var listEl = document.getElementById("sftp-list");
   var pathEl = document.getElementById("sftp-path");
@@ -15,7 +16,8 @@
   var fileInput = document.getElementById("sftp-file");
   var toggleBtn = document.getElementById("sftp-toggle");
 
-  var CHUNK = 256 * 1024;
+  var CHUNK = 512 * 1024;
+  var UPLOAD_INFLIGHT = 4;
   var ws = null;
   var cwd = "";
   var root = "";
@@ -35,9 +37,19 @@
     stateEl.textContent = text;
     stateEl.className = "sftp-state" + (kind ? " is-" + kind : "");
   }
-  function setStatus(text, kind) {
+  function setStatus(text, kind, progress) {
     statusEl.textContent = text || "";
-    statusEl.className = "sftp-status" + (kind ? " is-" + kind : "");
+    var cls = "sftp-status";
+    if (kind === true) { cls += " is-err"; }
+    else if (kind) { cls += " is-" + kind; }
+    if (typeof progress === "number") {
+      var pct = Math.max(0, Math.min(100, progress));
+      cls += " is-progress";
+      statusEl.style.setProperty("--progress", pct + "%");
+    } else {
+      statusEl.style.setProperty("--progress", "0%");
+    }
+    statusEl.className = cls;
   }
   function fmtSize(n) {
     if (n < 1024) { return n + " B"; }
@@ -107,14 +119,30 @@
       if (typeof event.data === "string") {
         var msg;
         try { msg = JSON.parse(event.data); } catch (e) { return; }
+        if (msg.op === "download_begin" && downloads[msg.id]) {
+          var started = downloads[msg.id];
+          if (pending[msg.id]) {
+            var beginCb = pending[msg.id];
+            delete pending[msg.id];
+            beginCb(msg);
+          }
+          if (msg.ok !== true || typeof msg.size !== "number") {
+            delete downloads[msg.id];
+            started.reject(new Error(msg.error || "invalid download response"));
+            return;
+          }
+          started.size = msg.size;
+          started.buf = new Uint8Array(msg.size);
+          return;
+        }
         if (msg.op === "download_done" && downloads[msg.id]) {
           var done = downloads[msg.id];
           delete downloads[msg.id];
-          if (done.end !== done.size) {
-            done.reject(new Error("download incomplete: received " + done.end + " of " + done.size + " bytes"));
+          if (!done.buf || done.received !== done.size) {
+            done.reject(new Error("download incomplete: received " + done.received + " of " + done.size + " bytes"));
             return;
           }
-          saveBlob(new Blob([done.buf]), done.name);
+          saveBlob(new Blob([done.buf], { type: "application/octet-stream" }), done.name);
           done.resolve(done.name);
           return;
         }
@@ -130,10 +158,22 @@
           cb(msg);
           return;
         }
-        if (msg.op === "write" && writeWaits[msg.id]) {
-          var w = writeWaits[msg.id];
-          delete writeWaits[msg.id];
-          if (msg.ok) { w.resolve(); } else { w.reject(new Error(msg.error || "write failed")); }
+        if (msg.op === "write") {
+          var wKey = msg.id + ":" + (msg.offset || 0);
+          var w = writeWaits[wKey];
+          if (w) {
+            delete writeWaits[wKey];
+            if (msg.ok) { w.resolve(); } else { w.reject(new Error(msg.error || "write failed")); }
+          } else if (!msg.ok) {
+            var prefix = msg.id + ":";
+            Object.keys(writeWaits).forEach(function (k) {
+              if (k.indexOf(prefix) === 0) {
+                var pendingWrite = writeWaits[k];
+                delete writeWaits[k];
+                pendingWrite.reject(new Error(msg.error || "write failed"));
+              }
+            });
+          }
           return;
         }
         if (msg.op === "error") { setStatus(msg.error || "file panel error", true); return; }
@@ -156,10 +196,11 @@
       var offset = Number(view.getBigUint64(8, false));
       var payload = buf.slice(16);
       var transfer = downloads[id];
-      if (transfer && payload.length && offset + payload.length <= transfer.buf.length) {
+      if (transfer && transfer.buf && payload.length && offset + payload.length <= transfer.buf.length) {
         transfer.buf.set(payload, offset);
-        transfer.end = Math.max(transfer.end, offset + payload.length);
-        setStatus("Downloading " + transfer.name + " — " + Math.round(transfer.end * 100 / (transfer.size || 1)) + "%");
+        transfer.received += payload.length;
+        var pct = Math.round(transfer.received * 100 / (transfer.size || 1));
+        setStatus("Downloading " + transfer.name + " — " + pct + "%", null, pct);
       }
     };
 
@@ -242,32 +283,72 @@
 
   function navigate(p) { if (p) { return load(p); } }
 
-  // The server streams the whole file after download_begin, so there is one
-  // request per file rather than one round trip per chunk. Chunks are placed
-  // by absolute offset, which makes interleaved/parallel downloads safe.
-  function downloadOne(entry) {
-    var id = xfer++;
-    return request({ op: "download_begin", id: id, path: entry.path }).then(function (msg) {
-      if (!msg || msg.ok !== true || typeof msg.size !== "number") {
-        throw new Error("invalid download response");
+  async function downloadOne(entry) {
+    if (!downloadPath || typeof window.fetch !== "function" || typeof window.ReadableStream !== "function") {
+      return downloadOneWS(entry);
+    }
+    var name = safeFileName(entry.name);
+    setStatus("Downloading " + name + "…", null, 0);
+    var url = downloadPath + "?path=" + encodeURIComponent(entry.path);
+    var resp = await fetch(url, { credentials: "same-origin" });
+    if (!resp.ok) {
+      var errText = await resp.text();
+      throw new Error((errText || ("download failed (" + resp.status + ")")).trim());
+    }
+    var total = Number(resp.headers.get("Content-Length")) || entry.size || 0;
+    if (!resp.body || typeof resp.body.getReader !== "function") {
+      var blob = await resp.blob();
+      saveBlob(blob, name);
+      setStatus("Downloading " + name + " — 100%", null, 100);
+      return name;
+    }
+    var reader = resp.body.getReader();
+    var chunks = [];
+    var received = 0;
+    while (true) {
+      var step = await reader.read();
+      if (step.done) { break; }
+      chunks.push(step.value);
+      received += step.value.byteLength;
+      if (total > 0) {
+        var pct = Math.min(100, Math.round(received * 100 / total));
+        setStatus("Downloading " + name + " — " + pct + "%", null, pct);
+      } else {
+        setStatus("Downloading " + name + " — " + fmtSize(received), null, 50);
       }
-      return new Promise(function (resolve, reject) {
-        var size = msg.size;
-        var timer = setTimeout(function () {
-          if (downloads[id]) {
-            delete downloads[id];
-            reject(new Error("download timed out"));
-          }
-        }, 120000);
-        downloads[id] = {
-          buf: new Uint8Array(size),
-          size: size,
-          end: 0,
-          name: safeFileName(entry.name),
-          resolve: function (name) { clearTimeout(timer); resolve(name); },
-          reject: function (err) { clearTimeout(timer); reject(err); }
-        };
-        setStatus("Downloading " + entry.name + "…");
+    }
+    if (total > 0 && received !== total) {
+      throw new Error("download incomplete: received " + received + " of " + total + " bytes");
+    }
+    saveBlob(new Blob(chunks, { type: "application/octet-stream" }), name);
+    return name;
+  }
+
+  // Fallback WebSocket streaming download.
+  function downloadOneWS(entry) {
+    var id = xfer++;
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        if (downloads[id]) {
+          delete downloads[id];
+          reject(new Error("download timed out"));
+        }
+      }, 120000);
+      downloads[id] = {
+        buf: null,
+        size: 0,
+        received: 0,
+        name: safeFileName(entry.name),
+        resolve: function (name) { clearTimeout(timer); resolve(name); },
+        reject: function (err) { clearTimeout(timer); reject(err); }
+      };
+      setStatus("Downloading " + entry.name + "…", null, 0);
+      request({ op: "download_begin", id: id, path: entry.path }).catch(function (err) {
+        if (downloads[id]) {
+          var transfer = downloads[id];
+          delete downloads[id];
+          transfer.reject(err);
+        }
       });
     });
   }
@@ -276,19 +357,36 @@
     var id = xfer++;
     await request({ op: "upload_begin", id: id, path: joinPath(cwd, file.name), size: file.size });
     var offset = 0;
+    var acked = 0;
+    var inflight = [];
+    setStatus("Uploading " + file.name + " — 0%", null, 0);
     while (offset < file.size) {
-      var slice = new Uint8Array(await file.slice(offset, offset + CHUNK).arrayBuffer());
+      var chunkOffset = offset;
+      var slice = new Uint8Array(await file.slice(chunkOffset, chunkOffset + CHUNK).arrayBuffer());
+      offset += slice.length;
       var frame = new Uint8Array(16 + slice.length);
       var view = new DataView(frame.buffer);
       view.setBigUint64(0, BigInt(id));
-      view.setBigUint64(8, BigInt(offset));
+      view.setBigUint64(8, BigInt(chunkOffset));
       frame.set(slice, 16);
-      var ack = new Promise(function (resolve, reject) { writeWaits[id] = { resolve: resolve, reject: reject }; });
+      var key = id + ":" + chunkOffset;
+      var chunkLen = slice.length;
+      var ack = (function (len) {
+        return withTimeout(new Promise(function (resolve, reject) {
+          writeWaits[key] = { resolve: resolve, reject: reject };
+        }), 60000).then(function () {
+          acked += len;
+          var pct = Math.round(acked * 100 / (file.size || 1));
+          setStatus("Uploading " + file.name + " — " + pct + "%", null, pct);
+        });
+      })(chunkLen);
       ws.send(frame);
-      await withTimeout(ack, 60000);
-      offset += slice.length;
-      setStatus("Uploading " + file.name + " — " + Math.round(offset * 100 / (file.size || 1)) + "%");
+      inflight.push(ack);
+      if (inflight.length >= UPLOAD_INFLIGHT) {
+        await inflight.shift();
+      }
     }
+    await Promise.all(inflight);
     await request({ op: "upload_end", id: id });
     return file.name;
   }
@@ -319,7 +417,7 @@
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
   }
 
   function selectedEntries() {

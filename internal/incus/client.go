@@ -488,6 +488,54 @@ func (c *Client) ExportBackup(ctx context.Context, instanceName, backupName, des
 	}
 }
 
+type streamWriteSeeker struct {
+	w io.Writer
+}
+
+func (s streamWriteSeeker) Write(p []byte) (int, error) { return s.w.Write(p) }
+func (s streamWriteSeeker) Seek(int64, int) (int64, error) {
+	return 0, errors.New("seek is not supported on streaming backup exports")
+}
+
+// ExportBackupStream streams an incusd-side backup archive directly into w
+// without writing a temporary file to disk.
+func (c *Client) ExportBackupStream(ctx context.Context, instanceName, backupName string, w io.WriteCloser, onProgress func(int64)) (int64, error) {
+	type outcome struct {
+		size int64
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		req := &incusclient.BackupFileRequest{BackupFile: streamWriteSeeker{w: w}}
+		if onProgress != nil {
+			req.ProgressHandler = func(p ioprogress.ProgressData) { onProgress(p.TransferredBytes) }
+		}
+		resp, err := c.srv.GetInstanceBackupFile(instanceName, backupName, req)
+		if pw, ok := w.(*io.PipeWriter); ok {
+			_ = pw.CloseWithError(err)
+		} else {
+			_ = w.Close()
+		}
+		var size int64
+		if resp != nil {
+			size = resp.Size
+		}
+		done <- outcome{size, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		if pw, ok := w.(*io.PipeWriter); ok {
+			_ = pw.CloseWithError(ctx.Err())
+		} else {
+			_ = w.Close()
+		}
+		return 0, ctx.Err()
+	case r := <-done:
+		return r.size, r.err
+	}
+}
+
 // ImportBackup re-creates an instance from a backup archive.
 func (c *Client) ImportBackup(ctx context.Context, name string, r io.Reader, pool string) error {
 	args := incusclient.InstanceBackupArgs{BackupFile: r, Name: name, PoolName: pool}

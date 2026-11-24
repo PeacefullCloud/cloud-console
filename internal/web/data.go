@@ -155,9 +155,11 @@ type instanceData struct {
 	CPUSeries      monitoring.Series
 	MemSeries      monitoring.Series
 
-	Snapshots []snapshots.Snapshot
-	Backups   []backups.Backup
-	Domains   []domains.Record
+	Snapshots          []snapshots.Snapshot
+	Backups            []backups.Backup
+	ResticDestinations []models.BackupDestination
+	ResticSnapshots    []models.ResticSnapshot
+	Domains            []domains.Record
 	Activity  []models.Activity
 	Disks     []diskView
 	Networks  []networkView
@@ -250,10 +252,12 @@ type snapshotsData struct {
 
 type backupsData struct {
 	baseData
-	Backups    []backups.Backup
-	S3Enabled  bool
-	S3Bucket   string
-	TotalBytes int64
+	Backups            []backups.Backup
+	ResticDestinations []models.BackupDestination
+	ResticSnapshots    []models.ResticSnapshot
+	S3Enabled          bool
+	S3Bucket           string
+	TotalBytes         int64
 }
 
 type domainsData struct {

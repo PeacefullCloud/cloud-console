@@ -191,3 +191,46 @@ type UserIdentity struct {
 	Subject    string
 	CreatedAt  time.Time
 }
+
+// BackupDestination is a tenant-owned off-site (or local) Restic repository
+// target. Secrets (RepoPassword, S3SecretKey, SSHPrivateKey) are sealed at
+// rest in SQLite via secrets.Sealer.
+type BackupDestination struct {
+	ID              int64
+	UserID          int64
+	Name            string
+	Kind            string // s3 | sftp | local
+	RepoURL         string
+	RepoPassword    string // decrypted in memory, sealed in DB
+	S3AccessKey     string
+	S3SecretKey     string // decrypted in memory, sealed in DB
+	S3Region        string
+	SSHPrivateKey   string // decrypted in memory, sealed in DB
+	SSHPublicKey    string
+	SSHKnownHosts   string
+	KeepLast        int
+	KeepDaily       int
+	KeepWeekly      int
+	LastCheckedAt   *time.Time
+	LastCheckStatus string
+	CreatedAt       time.Time
+}
+
+// ResticSnapshot records a backup snapshot stored in a BackupDestination.
+type ResticSnapshot struct {
+	ID              int64
+	DestinationID   int64
+	DestinationName string
+	DestinationKind string
+	InstanceName    string
+	SnapshotID      string
+	BackupName      string
+	RepoPrefix      string
+	SizeBytes       int64
+	DataAddedBytes  int64
+	DurationSec     float64
+	Status          string // running | complete | failed
+	Error           string
+	CreatedBy       string
+	CreatedAt       time.Time
+}

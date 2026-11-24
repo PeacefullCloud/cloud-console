@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,8 +36,8 @@ const (
 	sftpOpenTimeout  = 20 * time.Second
 	sftpIdleTimeout  = 15 * time.Minute
 	sftpSessionTick  = 20 * time.Second
-	sftpMaxChunk     = 256 * 1024
-	sftpReadLimit    = 2 << 20
+	sftpMaxChunk     = 512 * 1024
+	sftpReadLimit    = 4 << 20
 	sftpWriteTimeout = 30 * time.Second
 
 	// Bounds on client-supplied data so a hostile browser cannot grow the
@@ -70,9 +71,81 @@ fi
 echo "login user $u does not exist" >&2
 exit 4`
 
+type sftpWriteJob struct {
+	offset int64
+	data   []byte
+}
+
+type sftpUpload struct {
+	file   *sftp.File
+	ch     chan sftpWriteJob
+	done   chan struct{}
+	mu     sync.Mutex
+	closed bool
+}
+
+func startSFTPUpload(conn *sftpConn, id uint64, f *sftp.File) *sftpUpload {
+	u := &sftpUpload{
+		file: f,
+		ch:   make(chan sftpWriteJob, 16),
+		done: make(chan struct{}),
+	}
+	go func() {
+		defer close(u.done)
+		for job := range u.ch {
+			select {
+			case <-conn.done:
+				return
+			default:
+			}
+			_, err := u.file.WriteAt(job.data, job.offset)
+			if err != nil {
+				_ = conn.send(sftpMessage{ID: id, Op: "write", OK: false, Offset: job.offset, Error: friendlySFTPError(err)})
+				continue
+			}
+			_ = conn.send(sftpMessage{ID: id, Op: "write", OK: true, Offset: job.offset})
+		}
+	}()
+	return u
+}
+
+func (u *sftpUpload) enqueue(job sftpWriteJob) (ok bool, full bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.closed {
+		return false, false
+	}
+	select {
+	case u.ch <- job:
+		return true, false
+	default:
+		return false, true
+	}
+}
+
+func (u *sftpUpload) finish() error {
+	u.mu.Lock()
+	if !u.closed {
+		u.closed = true
+		close(u.ch)
+	}
+	u.mu.Unlock()
+	<-u.done
+	return u.file.Close()
+}
+
+func (u *sftpUpload) abort() {
+	u.mu.Lock()
+	if !u.closed {
+		u.closed = true
+		close(u.ch)
+	}
+	u.mu.Unlock()
+	_ = u.file.Close()
+}
+
 // sftpSession is one browser's SFTP connection. The client is safe for
-// concurrent use; the upload/download maps are only touched by the socket's
-// single reader goroutine.
+// concurrent use; transfers guards the active upload/download maps.
 type sftpSession struct {
 	client     *sftp.Client
 	root       string
@@ -89,10 +162,10 @@ type sftpSession struct {
 	mu       sync.Mutex
 	lastUsed time.Time
 
-	// transfers guards the file maps: the socket reader owns uploads, but a
-	// streaming download goroutine removes its own handle when it finishes.
+	// transfers guards the file maps: async upload workers and streaming
+	// download goroutines can run concurrently with the socket reader.
 	transfers sync.Mutex
-	uploads   map[uint64]*sftp.File
+	uploads   map[uint64]*sftpUpload
 	downloads map[uint64]*sftp.File
 }
 
@@ -122,8 +195,8 @@ func (sess *sftpSession) shutdown() {
 			sess.cancel()
 		}
 		sess.transfers.Lock()
-		for _, f := range sess.uploads {
-			_ = f.Close()
+		for _, u := range sess.uploads {
+			u.abort()
 		}
 		for _, f := range sess.downloads {
 			_ = f.Close()
@@ -252,7 +325,11 @@ func (s *Server) openSFTP(ctx context.Context, r *http.Request, name string) (*s
 	}
 	result := make(chan handshake, 1)
 	go func() {
-		client, err := sftp.NewClientPipe(fromGuestR, toGuestW)
+		client, err := sftp.NewClientPipe(
+			fromGuestR, toGuestW,
+			sftp.MaxPacketUnchecked(128*1024),
+			sftp.UseConcurrentWrites(true),
+		)
 		if err != nil {
 			result <- handshake{err: err}
 			return
@@ -306,7 +383,7 @@ func (s *Server) openSFTP(ctx context.Context, r *http.Request, name string) (*s
 		client: hs.client, root: root, userID: user.ID, username: user.Username,
 		token: token, tokenHash: hash, instance: name,
 		cancel: cancelExec, closePipes: cleanupPipes, lastUsed: time.Now(),
-		uploads: map[uint64]*sftp.File{}, downloads: map[uint64]*sftp.File{},
+		uploads: map[uint64]*sftpUpload{}, downloads: map[uint64]*sftp.File{},
 	}
 	s.sftpMu.Lock()
 	s.sftpSessions[hash] = sess
@@ -553,7 +630,7 @@ func (s *Server) handleSFTPSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSFTPWrite applies a binary chunk: [8-byte id][8-byte offset][data].
+// handleSFTPWrite queues a binary chunk: [8-byte id][8-byte offset][data].
 func (s *Server) handleSFTPWrite(conn *sftpConn, sess *sftpSession, frame []byte) {
 	if len(frame) < 16 {
 		conn.sendError(errors.New("short file chunk"))
@@ -561,17 +638,21 @@ func (s *Server) handleSFTPWrite(conn *sftpConn, sess *sftpSession, frame []byte
 	}
 	id := binary.BigEndian.Uint64(frame[0:8])
 	offset := int64(binary.BigEndian.Uint64(frame[8:16]))
-	f := sess.uploads[id]
-	if f == nil {
-		conn.send(sftpMessage{ID: id, Op: "write", OK: false, Error: "upload was not started"})
+	sess.transfers.Lock()
+	u := sess.uploads[id]
+	sess.transfers.Unlock()
+	if u == nil {
+		conn.send(sftpMessage{ID: id, Op: "write", OK: false, Offset: offset, Error: "upload was not started"})
 		return
 	}
-	_, err := f.WriteAt(frame[16:], offset)
-	if err != nil {
-		conn.send(sftpMessage{ID: id, Op: "write", OK: false, Error: friendlySFTPError(err)})
-		return
+	ok, full := u.enqueue(sftpWriteJob{offset: offset, data: frame[16:]})
+	if !ok {
+		msg := "upload was not started"
+		if full {
+			msg = "upload queue full"
+		}
+		conn.send(sftpMessage{ID: id, Op: "write", OK: false, Offset: offset, Error: msg})
 	}
-	_ = conn.send(sftpMessage{ID: id, Op: "write", OK: true, Offset: offset})
 }
 
 // sftpOpHasResponse lists operations whose handler sends its own JSON reply.
@@ -687,7 +768,10 @@ func (s *Server) handleSFTPControl(conn *sftpConn, sess *sftpSession, msg sftpMe
 		return nil
 
 	case "upload_begin":
-		if len(sess.uploads) >= sftpMaxTransfers {
+		sess.transfers.Lock()
+		activeUploads := len(sess.uploads)
+		sess.transfers.Unlock()
+		if activeUploads >= sftpMaxTransfers {
 			return errors.New("too many active uploads")
 		}
 		p, err := sess.resolve(msg.Path)
@@ -698,20 +782,27 @@ func (s *Server) handleSFTPControl(conn *sftpConn, sess *sftpSession, msg sftpMe
 		if err != nil {
 			return err
 		}
-		if old := sess.uploads[msg.ID]; old != nil {
-			_ = old.Close()
+		u := startSFTPUpload(conn, msg.ID, f)
+		sess.transfers.Lock()
+		old := sess.uploads[msg.ID]
+		sess.uploads[msg.ID] = u
+		sess.transfers.Unlock()
+		if old != nil {
+			old.abort()
 		}
-		sess.uploads[msg.ID] = f
 		return conn.send(sftpMessage{ID: msg.ID, Op: "upload_begin", OK: true, Size: msg.Size})
 
 	case "upload_end":
-		f := sess.uploads[msg.ID]
-		if f == nil {
+		sess.transfers.Lock()
+		u := sess.uploads[msg.ID]
+		if u != nil {
+			delete(sess.uploads, msg.ID)
+		}
+		sess.transfers.Unlock()
+		if u == nil {
 			return errors.New("upload was not started")
 		}
-		delete(sess.uploads, msg.ID)
-		err := f.Close()
-		if err != nil {
+		if err := u.finish(); err != nil {
 			return err
 		}
 		return conn.send(sftpMessage{ID: msg.ID, Op: "upload_end", OK: true})
@@ -747,13 +838,21 @@ func (s *Server) handleSFTPControl(conn *sftpConn, sess *sftpSession, msg sftpMe
 		// and offset, so several downloads can interleave safely, and the
 		// browser never needs a round trip per chunk.
 		if err := conn.send(sftpMessage{ID: msg.ID, Op: "download_begin", OK: true, Size: info.Size()}); err != nil {
+			sess.transfers.Lock()
+			if current := sess.downloads[msg.ID]; current == f {
+				delete(sess.downloads, msg.ID)
+			}
+			sess.transfers.Unlock()
+			_ = f.Close()
 			return err
 		}
 		go s.streamDownload(conn, sess, msg.ID, f, info.Size())
 		return nil
 
 	case "read":
+		sess.transfers.Lock()
 		f := sess.downloads[msg.ID]
+		sess.transfers.Unlock()
 		if f == nil {
 			return errors.New("download was not started")
 		}
@@ -769,11 +868,15 @@ func (s *Server) handleSFTPControl(conn *sftpConn, sess *sftpSession, msg sftpMe
 		return conn.sendChunk(msg.ID, msg.Offset, buf[:n])
 
 	case "download_end":
+		sess.transfers.Lock()
 		f := sess.downloads[msg.ID]
+		if f != nil {
+			delete(sess.downloads, msg.ID)
+		}
+		sess.transfers.Unlock()
 		if f == nil {
 			return nil
 		}
-		delete(sess.downloads, msg.ID)
 		return f.Close()
 
 	default:
@@ -898,4 +1001,90 @@ func (sess *sftpSession) copyRecursive(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+func sanitizeDownloadFilename(name string) string {
+	base := path.Base(name)
+	var b strings.Builder
+	for _, r := range base {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' || r == '/' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() == 0 {
+		return "download"
+	}
+	return b.String()
+}
+
+// handleSFTPDownload streams a file directly over HTTP using sftp.File.WriteTo
+// (concurrent pipelined SFTP reads) so downloads bypass WebSocket framing.
+func (s *Server) handleSFTPDownload(w http.ResponseWriter, r *http.Request) {
+	if !s.App.Cfg.TerminalEnabled {
+		http.Error(w, "The web terminal is disabled on this console.", http.StatusForbidden)
+		return
+	}
+	if err := checkWriteAccess(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if userFrom(r) == nil {
+		http.Error(w, "no console session", http.StatusUnauthorized)
+		return
+	}
+	reqPath := r.URL.Query().Get("path")
+	if reqPath == "" {
+		http.Error(w, "missing path", http.StatusBadRequest)
+		return
+	}
+
+	sess, err := s.openSFTP(r.Context(), r, r.PathValue("name"))
+	if err != nil {
+		http.Error(w, friendlySFTPError(err), http.StatusBadGateway)
+		return
+	}
+	sess.touch()
+
+	p, err := sess.resolve(reqPath)
+	if err != nil {
+		http.Error(w, friendlySFTPError(err), http.StatusForbidden)
+		return
+	}
+	f, err := sess.client.Open(p)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, os.ErrPermission) {
+			status = http.StatusForbidden
+		}
+		http.Error(w, friendlySFTPError(err), status)
+		return
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		http.Error(w, friendlySFTPError(err), http.StatusInternalServerError)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "cannot download a directory", http.StatusBadRequest)
+		return
+	}
+
+	// Disable the server's fixed write deadline for large file streams.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+	filename := sanitizeDownloadFilename(p)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+
+	if _, err := io.Copy(w, f); err != nil {
+		s.log.Debug("sftp http download ended early", "path", p, "err", err)
+	}
 }

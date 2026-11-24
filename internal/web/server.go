@@ -155,6 +155,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /instances/{name}/console", s.requireInstance(s.handleConsolePage))
 	m.HandleFunc("GET /instances/{name}/console/ws", s.requireInstance(s.handleConsoleSocket))
 	m.HandleFunc("GET /instances/{name}/console/sftp/ws", s.requireInstance(s.handleSFTPSocket))
+	m.HandleFunc("GET /instances/{name}/console/sftp/download", s.requireInstance(s.handleSFTPDownload))
 
 	m.HandleFunc("POST /instances/{name}/state", s.requireInstance(s.handleInstanceState))
 	m.HandleFunc("POST /instances/{name}/delete", s.requireInstance(s.handleInstanceDelete))
@@ -173,12 +174,20 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /instances/{name}/backups/{backup}/restore", s.requireInstance(s.handleBackupRestore))
 	m.HandleFunc("POST /instances/{name}/backups/{backup}/export", s.requireInstance(s.handleBackupExport))
 
+	m.HandleFunc("POST /instances/{name}/restic/backup", s.requireInstance(s.handleResticBackupCreate))
+	m.HandleFunc("POST /instances/{name}/restic/{id}/restore", s.requireInstance(s.handleResticSnapshotRestore))
+	m.HandleFunc("POST /instances/{name}/restic/{id}/delete", s.requireInstance(s.handleResticSnapshotDelete))
+
 	m.HandleFunc("POST /instances/{name}/domains", s.requireInstance(s.handleDomainCreate))
 	m.HandleFunc("POST /instances/{name}/domains/{id}/delete", s.requireInstance(s.handleInstanceDomainDelete))
 	m.HandleFunc("POST /domains/{id}/delete", s.requireDomain(s.handleDomainDelete))
 
 	m.HandleFunc("GET /snapshots", s.handleSnapshots)
 	m.HandleFunc("GET /backups", s.handleBackups)
+	m.HandleFunc("POST /backups/destinations", s.handleBackupDestinationCreate)
+	m.HandleFunc("POST /backups/destinations/{id}/delete", s.handleBackupDestinationDelete)
+	m.HandleFunc("POST /backups/destinations/{id}/check", s.handleBackupDestinationCheck)
+	m.HandleFunc("POST /backups/destinations/{id}/prune", s.handleBackupDestinationPrune)
 	m.HandleFunc("GET /domains", s.handleDomains)
 	m.HandleFunc("GET /storage", s.handleStorage)
 	m.HandleFunc("GET /networking", s.handleNetworking)

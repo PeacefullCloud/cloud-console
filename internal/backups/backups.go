@@ -25,9 +25,13 @@ import (
 
 // Job kinds handled by this package.
 const (
-	JobCreate  = "backup.create"
-	JobExport  = "backup.export"
-	JobRestore = "backup.restore"
+	JobCreate        = "backup.create"
+	JobExport        = "backup.export"
+	JobRestore       = "backup.restore"
+	JobResticBackup  = "restic.backup"
+	JobResticRestore = "restic.restore"
+	JobResticPrune   = "restic.prune"
+	JobResticCheck   = "restic.check"
 )
 
 // Errors surfaced to the UI.
@@ -67,15 +71,16 @@ type Notifier interface {
 
 // Service manages backups and their archives.
 type Service struct {
-	app      *core.App
-	s3       *s3Target
-	notifier Notifier
+	app       *core.App
+	s3        *s3Target
+	notifier  Notifier
+	resticBin string
 }
 
 // New creates the backup service. When S3 is not configured the service still
 // works, storing archives locally only.
 func New(app *core.App) *Service {
-	s := &Service{app: app}
+	s := &Service{app: app, resticBin: "restic"}
 
 	if app.Cfg.S3Configured() {
 		target, err := newS3Target(app.Cfg)
@@ -548,11 +553,18 @@ func (s *Service) WaitForAddress(ctx context.Context, name string) (string, erro
 	}
 }
 
+// SetResticBinary overrides the restic executable path (used by tests).
+func (s *Service) SetResticBinary(bin string) { s.resticBin = bin }
+
 // RegisterJobHandlers wires this package into the job worker.
 func (s *Service) RegisterJobHandlers() {
 	s.app.Jobs.Register(JobCreate, s.handleCreate)
 	s.app.Jobs.Register(JobExport, s.handleExport)
 	s.app.Jobs.Register(JobRestore, s.handleRestore)
+	s.app.Jobs.Register(JobResticBackup, s.handleResticBackup)
+	s.app.Jobs.Register(JobResticRestore, s.handleResticRestore)
+	s.app.Jobs.Register(JobResticPrune, s.handleResticPrune)
+	s.app.Jobs.Register(JobResticCheck, s.handleResticCheck)
 }
 
 // --- helpers --------------------------------------------------------------

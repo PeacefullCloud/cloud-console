@@ -479,6 +479,12 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 			s.log.Warn("could not list backups", "instance", name, "err", err)
 		}
 		data.Backups = list
+		if dests, derr := s.App.DB.ListBackupDestinationsScoped(scopeFrom(r)); derr == nil {
+			data.ResticDestinations = dests
+		}
+		if snaps, serr := s.App.DB.ListResticSnapshotsForInstance(name); serr == nil {
+			data.ResticSnapshots = snaps
+		}
 
 	case "domains", "networking":
 		list, err := s.Domains.ListForInstance(r.Context(), name)

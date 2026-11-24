@@ -153,16 +153,31 @@
 .sftp-empty { padding: 14px 10px; color: #7f98be; }
 
 .sftp-status {
+  position: relative;
   flex: 0 0 auto;
   min-height: 17px;
-  padding: 3px 9px;
+  padding: 3px 9px 5px;
   border-top: 1px solid #1d3562;
   color: #93b4e2;
   font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  --progress: 0%;
 }
+.sftp-status::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: var(--progress, 0%);
+  background: #5b9cff;
+  opacity: 0;
+  transition: width .12s linear, opacity .15s ease;
+  pointer-events: none;
+}
+.sftp-status.is-progress::after { opacity: 1; }
 .sftp-status.is-err { color: #ff9a9a; }
 .sftp-status.is-ok { color: #9ce9bd; }
 

@@ -95,10 +95,84 @@
       </tbody>
     </table>
   </div>
-  {{else}}
+  {{end}}
+  {{if not .Backups}}
   <div class="empty mt-16">
-    <h3>No backups</h3>
-    <p>Create a backup to keep a portable copy of this instance.</p>
+    <h3>No local backups</h3>
+    <p>Create a local backup or stream directly to a Restic destination below.</p>
+  </div>
+  {{end}}
+</div>
+
+<div class="card mt-16">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Restic Off-Site Backups</div>
+      <p class="card-sub">
+        Zero-temp-disk streaming into your encrypted Restic repository (uncompressed Incus export + content-defined deduplication).
+      </p>
+    </div>
+    <a class="btn btn-sm" href="/backups">Manage destinations</a>
+  </div>
+
+  {{if canWrite .User}}
+    {{if .ResticDestinations}}
+    <form method="post" action="/instances/{{$inst.Name}}/restic/backup" class="row-wrap mt-12">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <select name="destination_id" style="flex:1 1 200px">
+        {{range .ResticDestinations}}
+        <option value="{{.ID}}">{{.Name}} ({{.Kind}})</option>
+        {{end}}
+      </select>
+      <input type="text" name="backup_name" value="{{.SuggestedBackup}}" placeholder="snapshot label" style="flex:1 1 200px">
+      <button class="btn btn-primary" type="submit">Backup to Restic</button>
+    </form>
+    {{else}}
+    <p class="hint mt-8">No Restic destinations configured yet. <a href="/backups">Add an S3 or SFTP destination</a> to start streaming off-site backups.</p>
+    {{end}}
+  {{end}}
+
+  {{if .ResticSnapshots}}
+  <div class="table-wrap mt-16">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Snapshot</th>
+          <th>Destination</th>
+          <th>Created</th>
+          <th class="num">Size</th>
+          <th class="num">Added</th>
+          <th class="tight"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ResticSnapshots}}
+        <tr>
+          <td><span class="mono">{{.SnapshotID}}</span> {{if .BackupName}}<span class="muted">({{.BackupName}})</span>{{end}}</td>
+          <td>{{.DestinationName}} <span class="pill">{{.DestinationKind}}</span></td>
+          <td class="muted nowrap">{{date .CreatedAt}}</td>
+          <td class="num">{{bytes .SizeBytes}}</td>
+          <td class="num muted">{{bytes .DataAddedBytes}}</td>
+          <td>
+            {{if canWrite $.User}}
+            <div class="row-tight">
+              <form method="post" action="/instances/{{$inst.Name}}/restic/{{.ID}}/restore"
+                    data-confirm="Restore {{$inst.Name}} from Restic snapshot {{.SnapshotID}}?">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn btn-sm" type="submit">Restore</button>
+              </form>
+              <form method="post" action="/instances/{{$inst.Name}}/restic/{{.ID}}/delete"
+                    data-confirm="Delete Restic snapshot {{.SnapshotID}}?">
+                <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+              </form>
+            </div>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
   </div>
   {{end}}
 </div>
