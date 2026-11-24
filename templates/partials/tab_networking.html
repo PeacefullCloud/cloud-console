@@ -9,21 +9,60 @@
   </div>
 
   <div class="card-grid">
-    <div class="card" style="margin:0">
+    {{range $inst.DedicatedIPs}}
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="stat-label">Dedicated public IP</div>
+        {{if canAdmin $.User}}
+        <form method="post" action="/instances/{{$inst.Name}}/dedicated-ips/{{.ID}}/unassign">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="btn btn-sm" type="submit" data-confirm="Unassign dedicated IP {{.PublicIP}} from {{$inst.Name}}?">Unassign</button>
+        </form>
+        {{end}}
+      </div>
+      <div class="stat-value mono">{{.PublicIP}}</div>
+      <p class="hint">
+        {{if .Label}}{{.Label}} · {{end}}All ports forwarded 1:1 to this instance{{if .SNAT}} (outbound SNAT active){{else}} (inbound forwarding){{end}}.
+        {{if and (canAdmin $.User) .ListenIP}}<br>Host listen IP: <span class="mono">{{.ListenIP}}</span>{{end}}
+      </p>
+    </div>
+    {{end}}
+    <div class="card">
       <div class="stat-label">Private address</div>
-      <div class="stat-value mono" style="font-size:19px">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</div>
+      <div class="stat-value mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</div>
       <p class="hint">Assigned to this instance on the private network.</p>
     </div>
     {{range $i, $a := $inst.IPs}}
     {{if ne $a $inst.IP}}
-    <div class="card" style="margin:0">
+    <div class="card">
       <div class="stat-label">Additional address</div>
-      <div class="stat-value mono" style="font-size:19px">{{$a}}</div>
+      <div class="stat-value mono">{{$a}}</div>
       <p class="hint">Also reachable on the instance.</p>
     </div>
     {{end}}
     {{end}}
   </div>
+
+  {{if canAdmin .User}}
+  <div class="dedicated-assign-bar">
+    {{if .AvailableDedicatedIPs}}
+    <form method="post" action="/instances/{{$inst.Name}}/dedicated-ips/assign" class="row-tight">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label for="assign_ip_id" class="small muted">Assign dedicated IP:</label>
+      <select id="assign_ip_id" name="ip_id" class="input-sm" required>
+        <option value="">Choose an available IP…</option>
+        {{range .AvailableDedicatedIPs}}
+        <option value="{{.ID}}">{{.PublicIP}}{{if .Label}} — {{.Label}}{{end}}{{if .ListenIP}} (listen {{.ListenIP}}){{end}}</option>
+        {{end}}
+      </select>
+      <button class="btn btn-sm btn-primary" type="submit">Assign IP</button>
+      <a class="btn btn-sm" href="/networking">Manage pool</a>
+    </form>
+    {{else}}
+    <p class="hint" style="margin:0">No unassigned dedicated IPs in the pool. <a href="/networking">Manage dedicated IPs</a>.</p>
+    {{end}}
+  </div>
+  {{end}}
 </div>
 
 <div class="card">

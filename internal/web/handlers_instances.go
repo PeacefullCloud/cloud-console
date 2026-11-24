@@ -519,6 +519,15 @@ func (s *Server) instanceData(w http.ResponseWriter, r *http.Request, name, tab,
 	if tab == "networking" {
 		data.Networks = s.networkDevices(name)
 		data.PortForwards = s.portForwards(name)
+		if checkAdminAccess(r) == nil {
+			if all, ierr := s.Instances.ListDedicatedIPs(); ierr == nil {
+				for _, ip := range all {
+					if ip.InstanceName == "" {
+						data.AvailableDedicatedIPs = append(data.AvailableDedicatedIPs, ip)
+					}
+				}
+			}
+		}
 	}
 
 	// Ownership is an administrator concern; tenants never see the picker.
@@ -916,6 +925,69 @@ func (s *Server) handlePortForwardDelete(w http.ResponseWriter, r *http.Request)
 	}
 	s.App.Activity.Record(username, "Remove port forward", name, devName, err)
 	s.finish(w, r, fallback, err, "Removed port forward "+devName+".")
+}
+
+func (s *Server) handleInstanceDedicatedIPAssign(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=networking"
+
+	id, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("ip_id")), 10, 64)
+	if err != nil || id <= 0 {
+		err = errors.New("choose an available dedicated IP")
+	}
+	if aerr := checkAdminAccess(r); aerr != nil {
+		err = aerr
+	}
+
+	var updated *models.DedicatedIP
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		updated, err = s.Instances.AssignDedicatedIP(ctx, id, name)
+	}
+	detail := r.FormValue("ip_id")
+	notice := "Assigned dedicated IP."
+	if updated != nil {
+		detail = updated.PublicIP
+		notice = "Assigned dedicated IP " + updated.PublicIP + "."
+		if !updated.SNAT {
+			notice += " (Inbound forwarding active; SNAT unsupported on this host.)"
+		}
+	}
+	s.App.Activity.Record(username, "Assign dedicated IP", name, detail, err)
+	s.finish(w, r, fallback, err, notice)
+}
+
+func (s *Server) handleInstanceDedicatedIPUnassign(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	username := usernameOf(userFrom(r))
+	fallback := s.InstanceURL(name) + "?tab=networking"
+
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		err = errors.New("invalid dedicated IP")
+	}
+	if aerr := checkAdminAccess(r); aerr != nil {
+		err = aerr
+	}
+
+	detail := r.PathValue("id")
+	if err == nil {
+		existing, gerr := s.App.DB.GetDedicatedIP(id)
+		if gerr != nil {
+			err = errors.New("dedicated IP not found")
+		} else if existing.InstanceName != name {
+			err = errors.New("this dedicated IP is not assigned to " + name)
+		} else {
+			detail = existing.PublicIP
+			ctx, cancel := operationContext(r)
+			defer cancel()
+			_, err = s.Instances.UnassignDedicatedIP(ctx, id)
+		}
+	}
+	s.App.Activity.Record(username, "Unassign dedicated IP", name, detail, err)
+	s.finish(w, r, fallback, err, "Unassigned dedicated IP "+detail+".")
 }
 
 // InstanceURL builds the canonical instance page path.

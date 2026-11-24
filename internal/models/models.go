@@ -71,6 +71,29 @@ type Domain struct {
 	CreatedAt    time.Time
 }
 
+// DedicatedIP is an extra host/public IP in the admin-managed pool that can
+// be assigned 1:1 to a single instance via an Incus network forward.
+type DedicatedIP struct {
+	ID           int64
+	PublicIP     string // External IP shown to users (IPv4 or IPv6)
+	ListenIP     string // Host interface IP for the forward; "" means PublicIP
+	Network      string // Managed Incus network (e.g. incusbr0)
+	Label        string // Optional admin note (e.g. "Hetzner IP #1")
+	InstanceName string // Assigned instance name, or "" when available
+	TargetIP     string // Private IP on Network targeted by the forward
+	SNAT         bool   // True when matching SNAT rules are active
+	CreatedAt    time.Time
+	AssignedAt   *time.Time
+}
+
+// EffectiveListenIP returns the host address used by Incus network forwards.
+func (d DedicatedIP) EffectiveListenIP() string {
+	if d.ListenIP != "" {
+		return d.ListenIP
+	}
+	return d.PublicIP
+}
+
 // SnapshotMeta is console bookkeeping for an Incus snapshot. The snapshot itself
 // lives in Incus.
 type SnapshotMeta struct {

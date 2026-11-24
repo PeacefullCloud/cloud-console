@@ -501,8 +501,126 @@ func (s *Server) handleNetworking(w http.ResponseWriter, r *http.Request) {
 	if checkAdminAccess(r) == nil {
 		data.CaddyPath = s.App.Cfg.CaddyConfigPath
 		data.CaddyAdmin = s.App.Cfg.CaddyAdminURL
+		if ips, ierr := s.Instances.ListDedicatedIPs(); ierr == nil {
+			data.DedicatedIPs = ips
+		} else {
+			s.log.Warn("could not list dedicated IPs", "err", ierr)
+		}
 	}
 	s.render(w, r, "networking", http.StatusOK, data)
+}
+
+func (s *Server) handleDedicatedIPAdd(w http.ResponseWriter, r *http.Request) {
+	username := usernameOf(userFrom(r))
+	pub := strings.TrimSpace(r.FormValue("public_ip"))
+	listen := strings.TrimSpace(r.FormValue("listen_ip"))
+	network := strings.TrimSpace(r.FormValue("network"))
+	label := strings.TrimSpace(r.FormValue("label"))
+
+	var created *models.DedicatedIP
+	err := checkAdminAccess(r)
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		created, err = s.Instances.AddDedicatedIP(ctx, pub, listen, network, label)
+	}
+	detail := pub
+	if created != nil {
+		detail = created.PublicIP
+		if created.ListenIP != "" {
+			detail += " -> " + created.ListenIP
+		}
+	}
+	s.App.Activity.Record(username, "Add dedicated IP", detail, network, err)
+	notice := "Added " + detail + " to the dedicated IP pool."
+	if created != nil {
+		notice = "Added " + created.PublicIP + " to the dedicated IP pool."
+	}
+	s.finish(w, r, "/networking", err, notice)
+}
+
+func (s *Server) handleDedicatedIPAssign(w http.ResponseWriter, r *http.Request) {
+	username := usernameOf(userFrom(r))
+	instanceName := strings.TrimSpace(r.FormValue("instance_name"))
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		err = errors.New("invalid dedicated IP")
+	}
+	if aerr := checkAdminAccess(r); aerr != nil {
+		err = aerr
+	}
+
+	var updated *models.DedicatedIP
+	if err == nil {
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		updated, err = s.Instances.AssignDedicatedIP(ctx, id, instanceName)
+	}
+	target := instanceName
+	detail := r.PathValue("id")
+	notice := "Assigned dedicated IP."
+	if updated != nil {
+		detail = updated.PublicIP
+		target = updated.InstanceName
+		notice = "Assigned " + updated.PublicIP + " to " + updated.InstanceName + "."
+		if !updated.SNAT {
+			notice += " (Inbound forwarding active; SNAT unsupported on this host.)"
+		}
+	}
+	s.App.Activity.Record(username, "Assign dedicated IP", target, detail, err)
+	s.finish(w, r, "/networking", err, notice)
+}
+
+func (s *Server) handleDedicatedIPUnassign(w http.ResponseWriter, r *http.Request) {
+	username := usernameOf(userFrom(r))
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		err = errors.New("invalid dedicated IP")
+	}
+	if aerr := checkAdminAccess(r); aerr != nil {
+		err = aerr
+	}
+
+	var prevInstance string
+	if err == nil {
+		if existing, gerr := s.App.DB.GetDedicatedIP(id); gerr == nil {
+			prevInstance = existing.InstanceName
+		}
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		var updated *models.DedicatedIP
+		updated, err = s.Instances.UnassignDedicatedIP(ctx, id)
+		if err == nil && updated != nil {
+			s.App.Activity.Record(username, "Unassign dedicated IP", prevInstance, updated.PublicIP, nil)
+			s.finish(w, r, "/networking", nil, "Unassigned "+updated.PublicIP+" back to the pool.")
+			return
+		}
+	}
+	s.App.Activity.Record(username, "Unassign dedicated IP", prevInstance, r.PathValue("id"), err)
+	s.finish(w, r, "/networking", err, "Unassigned dedicated IP.")
+}
+
+func (s *Server) handleDedicatedIPDelete(w http.ResponseWriter, r *http.Request) {
+	username := usernameOf(userFrom(r))
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		err = errors.New("invalid dedicated IP")
+	}
+	if aerr := checkAdminAccess(r); aerr != nil {
+		err = aerr
+	}
+
+	detail := r.PathValue("id")
+	if err == nil {
+		if existing, gerr := s.App.DB.GetDedicatedIP(id); gerr == nil {
+			detail = existing.PublicIP
+		}
+		ctx, cancel := operationContext(r)
+		defer cancel()
+		err = s.Instances.RemoveDedicatedIP(ctx, id)
+	}
+	s.App.Activity.Record(username, "Remove dedicated IP", detail, "", err)
+	s.finish(w, r, "/networking", err, "Removed "+detail+" from the pool.")
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -514,6 +632,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, recoveryCodes []string) {
 	data := settingsData{
 		baseData: s.newBase(w, r, "settings", "Settings"),
+		Tab:      settingsTab(r.URL.Query().Get("tab"), checkAdminAccess(r) == nil),
+	}
+	// Two-factor setup and fresh recovery codes live on the security tab.
+	if recoveryCodes != nil || r.URL.Query().Get("totp") == "setup" {
+		data.Tab = "security"
 	}
 
 	// Everyone gets their own security settings. Host, user, provider, storage

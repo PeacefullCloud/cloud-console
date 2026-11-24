@@ -189,6 +189,8 @@ func (s *Server) routes() {
 
 	m.HandleFunc("POST /instances/{name}/ports", s.requireInstance(s.handlePortForwardAdd))
 	m.HandleFunc("POST /instances/{name}/ports/{dev}/delete", s.requireInstance(s.handlePortForwardDelete))
+	m.HandleFunc("POST /instances/{name}/dedicated-ips/assign", s.requireInstance(s.handleInstanceDedicatedIPAssign))
+	m.HandleFunc("POST /instances/{name}/dedicated-ips/{id}/unassign", s.requireInstance(s.handleInstanceDedicatedIPUnassign))
 
 	m.HandleFunc("GET /snapshots", s.handleSnapshots)
 	m.HandleFunc("GET /backups", s.handleBackups)
@@ -199,6 +201,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /domains", s.handleDomains)
 	m.HandleFunc("GET /storage", s.handleStorage)
 	m.HandleFunc("GET /networking", s.handleNetworking)
+	m.HandleFunc("POST /networking/ips", s.handleDedicatedIPAdd)
+	m.HandleFunc("POST /networking/ips/{id}/assign", s.handleDedicatedIPAssign)
+	m.HandleFunc("POST /networking/ips/{id}/unassign", s.handleDedicatedIPUnassign)
+	m.HandleFunc("POST /networking/ips/{id}/delete", s.handleDedicatedIPDelete)
 	m.HandleFunc("GET /activity", s.handleActivity)
 	m.HandleFunc("GET /activity/export.csv", s.handleActivityExport)
 	m.HandleFunc("GET /metrics", s.handleMetrics)

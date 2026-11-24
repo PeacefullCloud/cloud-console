@@ -243,6 +243,37 @@
     }
   });
 
+  // Settings sections are all rendered server-side; switching shows one
+  // panel in place and keeps ?tab= in the address so a reload or a shared
+  // link lands on the same section. Modified clicks still open a new tab.
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest("a[data-settings-tab]");
+    if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    var id = link.getAttribute("data-settings-tab");
+    var panel = document.querySelector('[data-settings-panel="' + id + '"]');
+    if (!panel) {
+      return;
+    }
+    event.preventDefault();
+    document.querySelectorAll("[data-settings-panel]").forEach(function (el) {
+      el.hidden = el !== panel;
+    });
+    document.querySelectorAll(".settings-tabs [data-settings-tab]").forEach(function (tab) {
+      var active = tab.getAttribute("data-settings-tab") === id;
+      tab.classList.toggle("active", active);
+      if (active) {
+        tab.setAttribute("aria-current", "page");
+      } else {
+        tab.removeAttribute("aria-current");
+      }
+    });
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", link.getAttribute("href"));
+    }
+  });
+
   // Reveal a form while a long request is in flight.
   document.addEventListener("htmx:beforeRequest", function (event) {
     var el = event.detail.elt;

@@ -1,25 +1,32 @@
 {{- /* Single sign-on fragments for HTMX (AJAX) provider operations.
        The provider list refreshes #sso-list-wrap in place; flash feedback
        travels in #settings-flash out-of-band. Context: ssoFragmentData for
-       sso_response, settingsData for sso_card. */ -}}
+       sso_response, settingsData for sso_card and sso_add_card. */ -}}
 
 {{define "sso_card"}}
 <div class="card">
   <div class="card-head">
     <div class="grow">
-      <div class="card-title">Single sign-on</div>
-      <p class="card-sub">Google, Microsoft, Keycloak or any OpenID provider.</p>
+      <div class="card-title">Sign-in methods</div>
+      <p class="card-sub">Google, Microsoft, Keycloak or any OpenID provider. Register each callback URL at the provider exactly as shown.</p>
     </div>
   </div>
   {{if not .SSOKeySet}}
   <div class="flash flash-warn">Set CONSOLE_SSO_KEY and restart the console before saving a client secret.</div>
   {{end}}
-  <p class="hint">After adding a provider, register its callback URL at the provider exactly as shown below.</p>
   {{template "sso_list" .}}
-  <details class="disclosure">
-    <summary>Add a sign-in method</summary>
-    <div class="disclosure-body">{{template "sso_form" (dict "PV" ssoBlank "CSRF" .CSRF)}}</div>
-  </details>
+</div>
+{{end}}
+
+{{define "sso_add_card"}}
+<div class="card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Add a sign-in method</div>
+      <p class="card-sub">Create an OpenID app at your provider first, then paste its details here.</p>
+    </div>
+  </div>
+  {{template "sso_form" (dict "PV" ssoBlank "CSRF" .CSRF)}}
 </div>
 {{end}}
 
@@ -27,9 +34,9 @@
 <div id="sso-list-wrap">
   {{if .Providers}}
   {{range .Providers}}
-  <div class="snap-row" style="padding:9px 0">
+  <div class="snap-row">
     <div class="grow">
-      <div class="snap-name" style="font-size:13px">{{.Name}}
+      <div class="snap-name">{{.Name}}
         {{if .Enabled}}{{else}} <span class="pill">disabled</span>{{end}}
         {{if .RequireMFA}} <span class="pill pill-info" title="Sign-ins without a multi-factor claim are rejected">MFA</span>{{end}}
       </div>
@@ -52,13 +59,16 @@
       </form>
     </div>
   </div>
-  <details class="disclosure">
+  <details class="disclosure sso-edit">
     <summary>Edit {{.Name}}</summary>
     <div class="disclosure-body">{{template "sso_form" (dict "PV" . "CSRF" $.CSRF)}}</div>
   </details>
   {{end}}
   {{else}}
-  <p class="muted small">No sign-in methods yet.</p>
+  <div class="empty">
+    <h3>No sign-in methods yet</h3>
+    <p>Add a provider to let people sign in with their existing work account.</p>
+  </div>
   {{end}}
 </div>
 {{end}}

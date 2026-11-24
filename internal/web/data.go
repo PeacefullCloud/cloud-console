@@ -161,16 +161,20 @@ type instanceData struct {
 	ResticDestinations []models.BackupDestination
 	ResticSnapshots    []models.ResticSnapshot
 	Domains            []domains.Record
-	Activity     []models.Activity
-	Disks        []diskView
-	Networks     []networkView
-	PortForwards []portForwardView
-	Images       []incus.Image
-	Sizes        []Size
+	Activity           []models.Activity
+	Disks              []diskView
+	Networks           []networkView
+	PortForwards       []portForwardView
+	Images             []incus.Image
+	Sizes              []Size
 
 	// Owners lists the accounts an administrator may reassign the instance
 	// to. It is empty for everyone else.
 	Owners []models.User
+
+	// AvailableDedicatedIPs lists unassigned pool IPs for administrators on
+	// the instance Networking tab. Empty for everyone else.
+	AvailableDedicatedIPs []models.DedicatedIP
 
 	// ConsoleLog holds the tail of the instance's console output.
 	ConsoleLog    []string
@@ -221,6 +225,20 @@ func instanceTabs() []tabItem {
 		{"history", "History"},
 		{"settings", "Settings"},
 	}
+}
+
+// settingsTab picks the visible Settings section. Unknown names, and
+// admin-only sections requested by anyone else, fall back to the account tab.
+func settingsTab(requested string, admin bool) string {
+	switch requested {
+	case "account", "security":
+		return requested
+	case "users", "sso", "workspace":
+		if admin {
+			return requested
+		}
+	}
+	return "account"
 }
 
 func windowOptions(active string) []windowOption {
@@ -312,6 +330,7 @@ type networkingData struct {
 	baseData
 	Networks     []networkInfo
 	Instances    []instances.Instance
+	DedicatedIPs []models.DedicatedIP
 	CaddyEnabled bool
 	CaddyPath    string
 	CaddyAdmin   string
@@ -356,6 +375,8 @@ type sshKeysFragmentData struct {
 
 type settingsData struct {
 	baseData
+	// Tab is the settings section shown on load (see settingsTab).
+	Tab     string
 	Host    *monitoring.Host
 	Users   []models.User
 	Preview string

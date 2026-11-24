@@ -94,7 +94,8 @@ type Instance struct {
 	PrimaryHost string
 	Notes       string
 
-	Domains []models.Domain
+	Domains      []models.Domain
+	DedicatedIPs []models.DedicatedIP
 
 	// Live usage, read from the monitor's latest sample when available.
 	CPUPercent  float64
@@ -159,6 +160,12 @@ func (s *Service) List(ctx context.Context, scope models.Scope) ([]Instance, err
 		return nil, err
 	}
 
+	dedicatedIPs, err := s.app.DB.ListDedicatedIPsByInstance()
+	if err != nil {
+		s.app.Log.Warn("could not read dedicated IPs", "err", err)
+		dedicatedIPs = map[string][]models.DedicatedIP{}
+	}
+
 	samples, err := s.app.DB.LatestMetricsMap()
 	if err != nil {
 		s.app.Log.Warn("could not read latest metrics", "err", err)
@@ -172,7 +179,7 @@ func (s *Service) List(ctx context.Context, scope models.Scope) ([]Instance, err
 				continue
 			}
 		}
-		out = append(out, s.merge(&fulls[i], meta, domains, samples))
+		out = append(out, s.merge(&fulls[i], meta, domains, dedicatedIPs, samples))
 	}
 
 	// Stable, human-friendly ordering.
@@ -200,12 +207,17 @@ func (s *Service) Get(ctx context.Context, name string) (*Instance, error) {
 		return nil, err
 	}
 
+	dedicated, err := s.app.DB.ListDedicatedIPsForInstance(name)
+	if err != nil {
+		s.app.Log.Warn("could not read dedicated IPs", "instance", name, "err", err)
+	}
+
 	samples, err := s.app.DB.LatestMetricsMap()
 	if err != nil {
 		samples = map[string]models.Metric{}
 	}
 
-	view := s.merge(full, m, map[string][]models.Domain{name: domains}, samples)
+	view := s.merge(full, m, map[string][]models.Domain{name: domains}, map[string][]models.DedicatedIP{name: dedicated}, samples)
 	return &view, nil
 }
 
@@ -217,23 +229,25 @@ func (s *Service) RawInstance(name string) (*incusapi.Instance, error) {
 
 // merge combines an Incus record with console metadata.
 func (s *Service) merge(full *incusapi.InstanceFull, meta map[string]models.InstanceMeta,
-	domains map[string][]models.Domain, samples map[string]models.Metric) Instance {
+	domains map[string][]models.Domain, dedicatedIPs map[string][]models.DedicatedIP,
+	samples map[string]models.Metric) Instance {
 
 	inst := full.Instance
 
 	view := Instance{
-		Name:        inst.Name,
-		Kind:        incus.InstanceKind(inst),
-		Status:      inst.Status,
-		Running:     inst.StatusCode == incusapi.Running,
-		IPs:         incus.InstanceIPs(full),
-		CPU:         incus.InstanceCPU(inst),
-		MemoryBytes: incus.InstanceMemoryBytes(inst),
-		DiskBytes:   incus.InstanceDiskBytes(inst),
-		StoragePool: incus.InstanceStoragePool(inst),
-		CreatedAt:   inst.CreatedAt,
-		LastUsedAt:  inst.LastUsedAt,
-		Description: inst.Description,
+		Name:         inst.Name,
+		Kind:         incus.InstanceKind(inst),
+		Status:       inst.Status,
+		Running:      inst.StatusCode == incusapi.Running,
+		IPs:          incus.InstanceIPs(full),
+		DedicatedIPs: dedicatedIPs[inst.Name],
+		CPU:          incus.InstanceCPU(inst),
+		MemoryBytes:  incus.InstanceMemoryBytes(inst),
+		DiskBytes:    incus.InstanceDiskBytes(inst),
+		StoragePool:  incus.InstanceStoragePool(inst),
+		CreatedAt:    inst.CreatedAt,
+		LastUsedAt:   inst.LastUsedAt,
+		Description:  inst.Description,
 	}
 
 	view.IP = incus.InstanceIP(full)

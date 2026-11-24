@@ -98,6 +98,37 @@ func (c *Client) Networks() ([]api.Network, error) {
 	return c.srv.GetNetworks()
 }
 
+// Network returns one configured network by name.
+func (c *Client) Network(name string) (*api.Network, error) {
+	net, _, err := c.srv.GetNetwork(name)
+	return net, err
+}
+
+// NetworkForwards lists configured forwards on a managed network.
+func (c *Client) NetworkForwards(networkName string) ([]api.NetworkForward, error) {
+	return c.srv.GetNetworkForwards(networkName)
+}
+
+// NetworkForward returns one network forward and its ETag.
+func (c *Client) NetworkForward(networkName, listenAddress string) (*api.NetworkForward, string, error) {
+	return c.srv.GetNetworkForward(networkName, listenAddress)
+}
+
+// CreateNetworkForward creates a new network forward on a managed network.
+func (c *Client) CreateNetworkForward(networkName string, forward api.NetworkForwardsPost) error {
+	return c.srv.CreateNetworkForward(networkName, forward)
+}
+
+// UpdateNetworkForward updates an existing network forward.
+func (c *Client) UpdateNetworkForward(networkName, listenAddress string, forward api.NetworkForwardPut, etag string) error {
+	return c.srv.UpdateNetworkForward(networkName, listenAddress, forward, etag)
+}
+
+// DeleteNetworkForward deletes a network forward from a managed network.
+func (c *Client) DeleteNetworkForward(networkName, listenAddress string) error {
+	return c.srv.DeleteNetworkForward(networkName, listenAddress)
+}
+
 // StoragePoolResources returns used/total space for a pool.
 func (c *Client) StoragePoolResources(name string) (*api.ResourcesStoragePool, error) {
 	return c.srv.GetStoragePoolResources(name)

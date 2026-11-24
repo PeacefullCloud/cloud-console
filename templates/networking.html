@@ -1,14 +1,138 @@
 {{define "title"}}Networking{{end}}
 {{define "content"}}
+{{$admin := canAdmin .User}}
 <div class="wrap">
   <div class="page-head">
     <div class="grow">
       <h1>Networking</h1>
-      <p class="page-sub">Instances use private addresses. Public traffic reaches them through their domains.</p>
+      <p class="page-sub">Instances use private addresses. Public traffic reaches them through domains or dedicated IPs.</p>
     </div>
   </div>
 
   {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
+  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
+
+  {{if $admin}}
+  <div class="split mb-16">
+    <div class="split-main">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Dedicated public IPs</div>
+            <p class="card-sub">Assign extra host IPs 1:1 to a single instance. Only administrators can manage or assign pool IPs.</p>
+          </div>
+          <span class="pill">{{len .DedicatedIPs}}</span>
+        </div>
+        {{if .DedicatedIPs}}
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Public IP</th>
+                <th>Network</th>
+                <th>Assignment</th>
+                <th class="right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .DedicatedIPs}}
+              <tr>
+                <td>
+                  <div class="mono strong">{{.PublicIP}}</div>
+                  {{if .Label}}<div class="snap-meta">{{.Label}}</div>{{end}}
+                  {{if .ListenIP}}<div class="snap-meta mono">listen {{.ListenIP}}</div>{{end}}
+                </td>
+                <td class="mono muted">{{.Network}}</td>
+                <td>
+                  {{if .InstanceName}}
+                    <a href="/instances/{{.InstanceName}}?tab=networking"><strong>{{.InstanceName}}</strong></a>
+                    <div class="snap-meta mono">→ {{.TargetIP}} · {{if .SNAT}}inbound + SNAT{{else}}inbound only{{end}}</div>
+                  {{else}}
+                    <span class="pill pill-ok">available</span>
+                  {{end}}
+                </td>
+                <td class="right">
+                  {{if .InstanceName}}
+                  <form method="post" action="/networking/ips/{{.ID}}/unassign" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                    <button class="btn btn-sm" type="submit" data-confirm="Unassign {{.PublicIP}} from {{.InstanceName}}?">Unassign</button>
+                  </form>
+                  {{else}}
+                  <div class="row-tight" style="justify-content:flex-end">
+                    {{if $.Instances}}
+                    <form method="post" action="/networking/ips/{{.ID}}/assign" class="row-tight">
+                      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                      <select name="instance_name" class="input-sm" aria-label="Instance for {{.PublicIP}}" required>
+                        <option value="">Assign to…</option>
+                        {{range $.Instances}}
+                        <option value="{{.Name}}">{{.Name}}{{if .IP}} ({{.IP}}){{end}}</option>
+                        {{end}}
+                      </select>
+                      <button class="btn btn-sm btn-primary" type="submit">Assign</button>
+                    </form>
+                    {{end}}
+                    <form method="post" action="/networking/ips/{{.ID}}/delete" style="display:inline">
+                      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+                      <button class="btn btn-sm btn-danger" type="submit" data-confirm="Remove {{.PublicIP}} from the pool?">Remove</button>
+                    </form>
+                  </div>
+                  {{end}}
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{else}}
+        <div class="empty">
+          <h3>No dedicated IPs yet</h3>
+          <p>Add extra public IPs from your server provider to assign them 1:1 to instances.</p>
+        </div>
+        {{end}}
+      </div>
+    </div>
+
+    <div class="split-side">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Add dedicated IP</div>
+            <p class="card-sub">Register an extra IP routed to this host (Hetzner, OVH, Leaseweb, AWS Elastic IP, etc.).</p>
+          </div>
+        </div>
+        <form method="post" action="/networking/ips">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="dip_public">Public IP</label>
+            <input id="dip_public" name="public_ip" type="text" class="mono" placeholder="203.0.113.50" required>
+          </div>
+          <div class="field">
+            <label for="dip_listen">Host listen IP (optional)</label>
+            <input id="dip_listen" name="listen_ip" type="text" class="mono" placeholder="Leave blank unless behind 1:1 NAT">
+            <p class="hint">For AWS/cloud VPCs where the Elastic IP maps to a secondary private IP on the host NIC.</p>
+          </div>
+          <div class="field">
+            <label for="dip_network">Incus network</label>
+            <select id="dip_network" name="network">
+              {{range .Networks}}
+              {{if eq .Managed "yes"}}
+              <option value="{{.Name}}" {{if eq .Name "incusbr0"}}selected{{end}}>{{.Name}}{{if .Address}} ({{.Address}}){{end}}</option>
+              {{end}}
+              {{else}}
+              <option value="incusbr0">incusbr0</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="field">
+            <label for="dip_label">Label (optional)</label>
+            <input id="dip_label" name="label" type="text" maxlength="64" placeholder="Mail server IP">
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">Add to pool</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {{end}}
 
   <div class="card">
     <div class="card-head">
@@ -17,12 +141,12 @@
     {{if .Networks}}
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Network</th>{{if canAdmin $.User}}<th class="num">Instances</th>{{end}}</tr></thead>
+        <thead><tr><th>Network</th>{{if $admin}}<th class="num">Instances</th>{{end}}</tr></thead>
         <tbody>
           {{range .Networks}}
           <tr>
             <td><strong>Private network</strong>{{if .Description}}<div class="snap-meta">{{.Description}}</div>{{end}}</td>
-            {{if canAdmin $.User}}<td class="num">{{.UsedBy}}</td>{{end}}
+            {{if $admin}}<td class="num">{{.UsedBy}}</td>{{end}}
           </tr>
           {{end}}
         </tbody>
@@ -37,18 +161,21 @@
     <div class="card-head">
       <div class="grow">
         <div class="card-title">Instance addresses</div>
-        <p class="card-sub">Private addresses assigned to your instances.</p>
+        <p class="card-sub">Private addresses and any assigned dedicated public IPs.</p>
       </div>
     </div>
     {{if .Instances}}
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Instance</th><th>Private address</th><th>Domains</th><th>Status</th><th class="tight"></th></tr></thead>
+        <thead><tr><th>Instance</th><th>Addresses</th><th>Domains</th><th>Status</th><th class="tight"></th></tr></thead>
         <tbody>
           {{range .Instances}}
           <tr>
             <td><a href="/instances/{{.Name}}?tab=networking">{{.Name}}</a></td>
-            <td class="mono">{{if .IP}}{{.IP}}{{else}}<span class="faint">pending</span>{{end}}</td>
+            <td class="mono">
+              {{range .DedicatedIPs}}<div><strong>{{.PublicIP}}</strong> <span class="pill pill-info">dedicated</span></div>{{end}}
+              <div>{{if .IP}}{{.IP}}{{else}}<span class="faint">pending</span>{{end}}</div>
+            </td>
             <td>
               {{if .Domains}}
                 {{range .Domains}}<div class="mono small">{{.Domain}}</div>{{end}}

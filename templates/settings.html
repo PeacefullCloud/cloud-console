@@ -1,51 +1,262 @@
 {{define "title"}}Settings{{end}}
 {{define "content"}}
+{{- /* Every section renders on the page; only the active one is visible.
+       The tab links work as plain ?tab= navigation without JavaScript, and
+       app.js switches panels in place when it is available. */ -}}
+{{$tab := or .Tab "account"}}
+{{$admin := canAdmin .User}}
 <div class="wrap">
   <div class="page-head">
     <div class="grow">
       <h1>Settings</h1>
-      <p class="page-sub">Workspace and security configuration.</p>
+      <p class="page-sub">{{if $admin}}Your account and security, plus users, sign-in methods and workspace configuration.{{else}}Your account and security.{{end}}</p>
     </div>
   </div>
 
   {{template "settings_flash" .}}
 
-  <div class="split">
-    <div class="split-main">
+  <nav class="tabs settings-tabs" aria-label="Settings sections">
+    <a class="tab {{if eq $tab "account"}}active{{end}}" href="/settings?tab=account" data-settings-tab="account" {{if eq $tab "account"}}aria-current="page"{{end}}>Account</a>
+    <a class="tab {{if eq $tab "security"}}active{{end}}" href="/settings?tab=security" data-settings-tab="security" {{if eq $tab "security"}}aria-current="page"{{end}}>Security</a>
+    {{if $admin}}
+    <a class="tab {{if eq $tab "users"}}active{{end}}" href="/settings?tab=users" data-settings-tab="users" {{if eq $tab "users"}}aria-current="page"{{end}}>Users</a>
+    <a class="tab {{if eq $tab "sso"}}active{{end}}" href="/settings?tab=sso" data-settings-tab="sso" {{if eq $tab "sso"}}aria-current="page"{{end}}>Single sign-on</a>
+    <a class="tab {{if eq $tab "workspace"}}active{{end}}" href="/settings?tab=workspace" data-settings-tab="workspace" {{if eq $tab "workspace"}}aria-current="page"{{end}}>Workspace</a>
+    {{end}}
+  </nav>
 
-      {{if canAdmin .User}}
+  {{/* ---------------- Account ---------------- */}}
+  <section class="settings-panel" data-settings-panel="account" aria-label="Account"{{if ne $tab "account"}} hidden{{end}}>
+    <div class="card profile-card">
+      <span class="avatar avatar-lg">{{initials .User.Username}}</span>
+      <div class="grow">
+        <div class="profile-name">{{.User.Username}}</div>
+        <div class="profile-meta">
+          <span class="pill pill-info">{{.User.Role}}</span>
+          <span>{{if eq .User.Role "admin"}}Full access to the workspace{{else if eq .User.Role "operator"}}Can manage instances{{else}}Read-only access{{end}}</span>
+        </div>
+      </div>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <button class="btn" type="submit">Sign out</button>
+      </form>
+    </div>
+
+    <div class="settings-grid">
       <div class="card">
         <div class="card-head">
           <div class="grow">
-            <div class="card-title">Infrastructure</div>
-            <p class="card-sub">Current capacity for this workspace.</p>
+            <div class="card-title">Your password</div>
+            <p class="card-sub">Use at least 8 characters. Other devices stay signed in.</p>
           </div>
         </div>
-        <div class="stat-grid" style="margin-bottom:14px">
-          <div class="stat">
-            <div class="stat-label">CPU cores</div>
-            <div class="stat-value">{{.Host.CPUTotal}}</div>
+        <form method="post" action="/settings/password"
+              hx-post="/settings/password" hx-swap="none" hx-disabled-elt="find button" data-reset-after-request>
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="current_password">Current password</label>
+            <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
           </div>
-          <div class="stat">
-            <div class="stat-label">Memory</div>
-            <div class="stat-value">{{gb .Host.MemoryTotal}}</div>
-            <div class="stat-note">{{gb .Host.MemoryUsed}} in use</div>
+          <div class="field">
+            <label for="new_pw">New password</label>
+            <input id="new_pw" name="new_password" type="password" minlength="8" autocomplete="new-password" required>
           </div>
-          <div class="stat">
-            <div class="stat-label">Instances</div>
-            <div class="stat-value">{{.InstanceCount}}</div>
-            <div class="stat-note">{{.RunningCount}} running</div>
+          <button class="btn btn-primary" type="submit">Change password</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Session</div>
+            <p class="card-sub">Details of the session you are using right now.</p>
+          </div>
+        </div>
+        <dl class="kv kv-grid">
+          <div><dt>Signed in as</dt><dd class="strong">{{.User.Username}}</dd></div>
+          <div><dt>Role</dt><dd>{{.User.Role}}</dd></div>
+          <div><dt>Sign-in method</dt><dd>{{authMethod .User.AuthMethod}}</dd></div>
+          <div><dt>Session lifetime</dt><dd>{{.SessionTTL}} hours</dd></div>
+          {{if $admin}}<div><dt>Active sessions (all users)</dt><dd>{{.SessionCount}}</dd></div>{{end}}
+        </dl>
+        <p class="hint mt-16">Manage two-factor and signed-in devices under <a href="/settings?tab=security" data-settings-tab="security">Security</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  {{/* ---------------- Security ---------------- */}}
+  <section class="settings-panel" data-settings-panel="security" aria-label="Security"{{if ne $tab "security"}} hidden{{end}}>
+    <div class="settings-grid">
+      {{template "totp_card" .}}
+
+      <div class="settings-stack">
+        {{template "sessions_card" .}}
+
+        {{if .LinkProviders}}
+        <div class="card">
+          <div class="card-head">
+            <div class="grow">
+              <div class="card-title">Linked sign-in</div>
+              <p class="card-sub">Link a provider to sign in with it. Accounts are never linked automatically, even when the names match.</p>
+            </div>
+          </div>
+          {{range .LinkProviders}}
+          <div class="snap-row">
+            <div class="grow"><div class="snap-name">{{.Name}}</div></div>
+            {{if index $.MyLinks .ID}}
+            <span class="pill pill-ok">linked</span>
+            {{else}}
+            <form method="post" action="/auth/sso/link/{{.ID}}" class="row-tight">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              {{if ne $.User.AuthMethod "sso"}}<input name="current_password" type="password" placeholder="Current password" aria-label="Current password" required>{{end}}
+              <button class="btn btn-sm" type="submit">Link</button>
+            </form>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+    </div>
+  </section>
+
+  {{if $admin}}
+  {{/* ---------------- Users ---------------- */}}
+  <section class="settings-panel" data-settings-panel="users" aria-label="Users"{{if ne $tab "users"}} hidden{{end}}>
+    <div class="split">
+      <div class="split-main">
+        <div class="card">
+          <div class="card-head">
+            <div class="grow">
+              <div class="card-title">Console users</div>
+              <p class="card-sub">Everyone who can sign in to this console, with their quota and sign-in rules.</p>
+            </div>
+            <span class="pill" id="users-count">{{len .Users}}</span>
+          </div>
+          {{template "users_list" .}}
+        </div>
+      </div>
+
+      <div class="split-side">
+        <div class="card">
+          <div class="card-head">
+            <div class="grow">
+              <div class="card-title">Add a user</div>
+              <p class="card-sub">The new user can sign in straight away.</p>
+            </div>
+          </div>
+          <form method="post" action="/settings/users"
+                hx-post="/settings/users" hx-target="#users-list" hx-swap="outerHTML"
+                hx-disabled-elt="find button" data-reset-after-request>
+            <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+            <div class="field">
+              <label for="new_username">Username</label>
+              <input id="new_username" name="username" type="text" autocomplete="off" required>
+            </div>
+            <div class="field">
+              <label for="new_password">Password</label>
+              <input id="new_password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+            </div>
+            <div class="field">
+              <label for="new_role">Role</label>
+              <select id="new_role" name="role">
+                <option value="operator">Operator — manage instances</option>
+                <option value="admin">Admin — full access</option>
+                <option value="viewer">Viewer — read only</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="new_quota">Instance quota</label>
+              <input id="new_quota" name="max_instances" type="number" min="0" value="0">
+              <p class="hint">0 means unlimited; the workspace limit still applies.</p>
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">Create user</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="grow"><div class="card-title">Roles</div></div></div>
+          <ul class="role-list">
+            <li><span class="pill pill-info">admin</span><span>Full access, including users, sign-in methods and workspace settings.</span></li>
+            <li><span class="pill pill-info">operator</span><span>Creates and manages their own instances, snapshots and backups.</span></li>
+            <li><span class="pill pill-info">viewer</span><span>Read-only access to instances and activity.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {{/* ---------------- Single sign-on ---------------- */}}
+  <section class="settings-panel" data-settings-panel="sso" aria-label="Single sign-on"{{if ne $tab "sso"}} hidden{{end}}>
+    <div class="split">
+      <div class="split-main">
+        {{template "sso_card" .}}
+      </div>
+      <div class="split-side">
+        {{template "sso_add_card" .}}
+      </div>
+    </div>
+  </section>
+
+  {{/* ---------------- Workspace ---------------- */}}
+  <section class="settings-panel" data-settings-panel="workspace" aria-label="Workspace"{{if ne $tab "workspace"}} hidden{{end}}>
+    <div class="stat-grid settings-stats">
+      <div class="stat">
+        <div class="stat-label">CPU cores</div>
+        <div class="stat-value">{{.Host.CPUTotal}}</div>
+        <div class="stat-note">available to instances</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Memory</div>
+        <div class="stat-value">{{gb .Host.MemoryTotal}}</div>
+        <div class="stat-note">{{gb .Host.MemoryUsed}} in use</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Instances</div>
+        <div class="stat-value">{{.InstanceCount}}</div>
+        <div class="stat-note">{{.RunningCount}} running</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Users</div>
+        <div class="stat-value">{{len .Users}}</div>
+        <div class="stat-note">{{.SessionCount}} active sessions</div>
+      </div>
+    </div>
+
+    <div class="settings-grid">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Storage pools</div>
+            <p class="card-sub">Disk capacity shared by instances, snapshots and local backups.</p>
           </div>
         </div>
         {{range .Host.Pools}}
-        <div class="mt-16">
+        <div class="pool-meter">
           <div class="row mb-8">
-            <span class="small"><strong>Storage</strong></span>
+            <span class="small"><strong>{{.Name}}</strong>{{if .Driver}} <span class="faint">{{.Driver}}</span>{{end}}</span>
             <span class="spacer small muted">{{gb .Used}} / {{gb .Total}}</span>
           </div>
           <div class="progress {{usageClass (poolPercent .Used .Total)}}"><span style="width: {{pct (poolPercent .Used .Total)}}%"></span></div>
         </div>
+        {{else}}
+        <p class="muted small">No storage pools reported.</p>
         {{end}}
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Console</div>
+            <p class="card-sub">How this console collects metrics and runs background work.</p>
+          </div>
+        </div>
+        <dl class="kv kv-grid">
+          <div><dt>Metrics interval</dt><dd>{{if .MetricsInterval}}every {{.MetricsInterval}} s{{else}}—{{end}}</dd></div>
+          <div><dt>Metrics retention</dt><dd>{{if .MetricsRetention}}{{.MetricsRetention}} hours{{else}}—{{end}}</dd></div>
+          <div><dt>Background workers</dt><dd>{{if .JobWorkers}}{{.JobWorkers}}{{else}}—{{end}}</dd></div>
+          <div><dt>Session lifetime</dt><dd>{{.SessionTTL}} hours</dd></div>
+        </dl>
       </div>
 
       <div class="card">
@@ -56,18 +267,17 @@
           </div>
           {{if .S3Configured}}<span class="pill pill-ok">configured</span>{{else}}<span class="pill pill-warn">not configured</span>{{end}}
         </div>
-
         {{if .S3Configured}}
-        <dl class="kv">
-          <dt>Bucket</dt><dd class="mono">{{.S3Bucket}}</dd>
-          <dt>Endpoint</dt><dd class="mono">{{.S3Endpoint}}</dd>
-          <dt>Region</dt><dd class="mono">{{.S3Region}}</dd>
-          <dt>Prefix</dt><dd class="mono">{{.S3Prefix}}</dd>
-          <dt>Access key</dt><dd class="mono">{{.S3AccessKeyMasked}}</dd>
+        <dl class="kv kv-grid">
+          <div><dt>Bucket</dt><dd class="mono">{{.S3Bucket}}</dd></div>
+          <div><dt>Region</dt><dd class="mono">{{.S3Region}}</dd></div>
+          <div class="kv-wide"><dt>Endpoint</dt><dd class="mono">{{.S3Endpoint}}</dd></div>
+          <div><dt>Prefix</dt><dd class="mono">{{.S3Prefix}}</dd></div>
+          <div><dt>Access key</dt><dd class="mono">{{.S3AccessKeyMasked}}</dd></div>
         </dl>
         {{else}}
         <p class="muted small">Set these environment variables and restart the console:</p>
-        <pre class="mono" style="background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:12px;margin:0">S3_ENDPOINT=s3.example.com
+        <pre class="code-block">S3_ENDPOINT=s3.example.com
 S3_BUCKET=backups
 S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
@@ -84,120 +294,11 @@ S3_USE_SSL=true</pre>
           </div>
           {{if .CaddyEnabled}}<span class="pill pill-ok">active</span>{{else}}<span class="pill pill-warn">unavailable</span>{{end}}
         </div>
-        <p class="muted small" style="margin:0">Domains added to instances are applied automatically, with certificates issued and renewed for you.</p>
+        <p class="muted small">Domains added to instances are applied automatically, with certificates issued and renewed for you.</p>
+        <a class="btn btn-sm" href="/domains">Manage domains</a>
       </div>
-      {{end}}
-
     </div>
-
-    <div class="split-side">
-
-      {{if canAdmin .User}}
-      <div class="card">
-        <div class="card-head">
-          <div class="grow"><div class="card-title">Console users</div></div>
-          <span class="muted small" id="users-count">{{len .Users}}</span>
-        </div>
-        {{template "users_list" .}}
-
-        {{if canAdmin .User}}
-        <details class="disclosure">
-          <summary>Add a user</summary>
-          <div class="disclosure-body">
-            <form method="post" action="/settings/users"
-                  hx-post="/settings/users" hx-target="#users-list" hx-swap="outerHTML"
-                  hx-disabled-elt="find button" data-reset-after-request>
-              <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-              <div class="field">
-                <label for="new_username">Username</label>
-                <input id="new_username" name="username" type="text" required>
-              </div>
-              <div class="field">
-                <label for="new_password">Password</label>
-                <input id="new_password" name="password" type="password" minlength="8" required>
-              </div>
-              <div class="field">
-                <label for="new_role">Role</label>
-                <select id="new_role" name="role">
-                  <option value="operator">Operator — manage instances</option>
-                  <option value="admin">Admin — full access</option>
-                  <option value="viewer">Viewer — read only</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="new_quota">Instance quota</label>
-                <input id="new_quota" name="max_instances" type="number" min="0" value="0">
-                <p class="hint">0 means unlimited; the workspace limit still applies.</p>
-              </div>
-              <button class="btn btn-primary btn-block" type="submit">Create user</button>
-            </form>
-          </div>
-        </details>
-        {{end}}
-      </div>
-      {{end}}
-
-      {{if canAdmin .User}}
-      {{template "sso_card" .}}
-      {{end}}
-
-      <div class="card">
-        <div class="card-head"><div class="grow"><div class="card-title">Your password</div></div></div>
-        <form method="post" action="/settings/password"
-              hx-post="/settings/password" hx-swap="none" hx-disabled-elt="find button">
-          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-          <div class="field">
-            <label for="current_password">Current password</label>
-            <input id="current_password" name="current_password" type="password" required>
-          </div>
-          <div class="field">
-            <label for="new_pw">New password</label>
-            <input id="new_pw" name="new_password" type="password" minlength="8" required>
-          </div>
-          <button class="btn btn-block" type="submit">Change password</button>
-        </form>
-      </div>
-
-      {{template "totp_card" .}}
-
-      {{template "sessions_card" .}}
-
-      {{if .LinkProviders}}
-      <div class="card">
-        <div class="card-head"><div class="grow"><div class="card-title">Linked sign-in</div></div></div>
-        <p class="hint">Link a provider to your account to sign in with it. An account is never linked automatically, even when the names match.</p>
-        {{range .LinkProviders}}
-        <div class="snap-row" style="padding:9px 0">
-          <div class="grow"><div class="snap-name" style="font-size:13px">{{.Name}}</div></div>
-          {{if index $.MyLinks .ID}}
-          <span class="pill pill-ok">linked</span>
-          {{else}}
-          <form method="post" action="/auth/sso/link/{{.ID}}" class="row-tight">
-            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            {{if ne $.User.AuthMethod "sso"}}<input name="current_password" type="password" placeholder="Current password" aria-label="Current password" required>{{end}}
-            <button class="btn btn-sm" type="submit">Link</button>
-          </form>
-          {{end}}
-        </div>
-        {{end}}
-      </div>
-      {{end}}
-
-      <div class="card">
-        <div class="card-head"><div class="grow"><div class="card-title">Session</div></div></div>
-        <dl class="kv">
-          <dt>Signed in as</dt><dd class="strong">{{.User.Username}}</dd>
-          <dt>Role</dt><dd>{{.User.Role}}</dd>
-          {{if canAdmin .User}}<dt>Active sessions</dt><dd>{{.SessionCount}}</dd>{{end}}
-          <dt>Session lifetime</dt><dd>{{.SessionTTL}} hours</dd>
-        </dl>
-        <form method="post" action="/logout" class="mt-16">
-          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-          <button class="btn btn-block" type="submit">Sign out</button>
-        </form>
-      </div>
-
-    </div>
-  </div>
+  </section>
+  {{end}}
 </div>
 {{end}}

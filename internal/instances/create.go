@@ -518,6 +518,7 @@ func (s *Service) handleRebuild(ctx context.Context, job *models.Job) error {
 	if _, err := s.WaitForIP(ctx, payload.Name, 90*time.Second); err != nil {
 		s.app.Log.Warn("rebuild: instance has no address yet", "instance", payload.Name, "err", err)
 	}
+	s.syncDedicatedIPs(ctx, payload.Name)
 
 	if err := <-sshDone; err != nil {
 		s.app.Log.Warn("rebuild: ssh provisioning incomplete", "instance", payload.Name, "err", err)
@@ -615,6 +616,7 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 	if s.archives != nil {
 		s.archives.InstanceDeleted(ctx, name)
 	}
+	s.releaseDedicatedIPs(ctx, name)
 	s.app.DB.DeleteDomainsForInstance(name)
 	s.app.DB.DeleteSnapshotsForInstance(name)
 	s.app.DB.DeleteBackupsForInstance(name)
@@ -669,6 +671,7 @@ func (s *Service) Rename(ctx context.Context, oldName, newName string) error {
 	if err := s.app.DB.RenameMetrics(oldName, newName); err != nil {
 		s.app.Log.Warn("could not move metrics history", "err", err)
 	}
+	s.renameDedicatedIPs(ctx, oldName, newName)
 	if s.archives != nil {
 		s.archives.InstanceRenamed(oldName, newName)
 	}

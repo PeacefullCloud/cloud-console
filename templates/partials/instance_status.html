@@ -92,6 +92,10 @@
 
 <div class="detail-col">
   <dl class="kv">
+    {{if $inst.DedicatedIPs}}
+    <dt>Dedicated public IP</dt>
+    <dd class="strong mono">{{range $inst.DedicatedIPs}}<div>{{.PublicIP}}</div>{{end}}</dd>
+    {{end}}
     <dt>Private address</dt>
     <dd class="strong mono">{{if $inst.IP}}{{$inst.IP}}{{else}}pending{{end}}</dd>
     {{if gt (len $inst.IPs) 1}}

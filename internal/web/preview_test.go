@@ -15,6 +15,7 @@ import (
 	"github.com/peaceful/cloud-console/internal/models"
 	"github.com/peaceful/cloud-console/internal/monitoring"
 	"github.com/peaceful/cloud-console/internal/snapshots"
+	"github.com/peaceful/cloud-console/internal/sso"
 )
 
 // TestWriteDesignPreview renders every page to static HTML so the layout can be
@@ -167,6 +168,9 @@ func previewPages() []previewPage {
 		Networks: []networkView{
 			{Name: "eth0", Type: "nic", Network: "incusbr0", MAC: "00:16:3e:aa:bb:cc", State: "up"},
 		},
+		AvailableDedicatedIPs: []models.DedicatedIP{
+			{ID: 2, PublicIP: "198.51.100.42", Network: "incusbr0", Label: "Hetzner spare"},
+		},
 	}
 
 	caddyPreview := "example.com {\n\treverse_proxy 10.10.0.21:80\n}\n\napi.example.com {\n\treverse_proxy 10.10.0.22:80\n}\n"
@@ -268,7 +272,11 @@ func previewPages() []previewPage {
 				{Name: "incusbr0", Type: "bridge", Managed: "yes", Address: "10.10.0.1/24", UsedBy: 3},
 				{Name: "lo", Type: "loopback", Managed: "no", Address: "127.0.0.1/8", UsedBy: 0},
 			},
-			Instances:    list,
+			Instances: list,
+			DedicatedIPs: []models.DedicatedIP{
+				{ID: 1, PublicIP: "203.0.113.50", Network: "incusbr0", Label: "Primary web", InstanceName: "wp-example", TargetIP: "10.10.0.21", SNAT: true},
+				{ID: 2, PublicIP: "198.51.100.42", ListenIP: "172.31.1.10", Network: "incusbr0", Label: "AWS Elastic IP"},
+			},
 			CaddyEnabled: true,
 			CaddyPath:    "/etc/caddy/Caddyfile",
 		}},
@@ -284,29 +292,49 @@ func previewPages() []previewPage {
 				{ID: "7a11", Kind: "backup.create", Target: "wp-example", Status: "done", Progress: 100, Message: "Completed", CreatedBy: "admin", CreatedAt: time.Now().Add(-15 * time.Hour)},
 			},
 		}},
-		{file: "settings", page: "settings", data: settingsData{
-			baseData: base,
-			Host:     host,
-			Users: []models.User{
-				{ID: 1, Username: "admin", Role: "admin"},
-				{ID: 2, Username: "ops", Role: "operator"},
-			},
-			S3Configured:      true,
-			S3Bucket:          "incus-backups",
-			S3Endpoint:        "s3.eu-west-1.amazonaws.com",
-			S3Region:          "eu-west-1",
-			S3Prefix:          "peaceful-cloud",
-			S3AccessKeyMasked: "AKI••••••••23",
-			CaddyEnabled:      true,
-			CaddyPath:         "/etc/caddy/Caddyfile",
-			CaddyReloadCmd:    "caddy reload --config /etc/caddy/Caddyfile",
-			CaddyPreview:      caddyPreview,
-			SessionCount:      2,
-			SessionTTL:        168,
-			MetricsInterval:   60,
-			MetricsRetention:  168,
-			JobWorkers:        3,
-		}},
+	}
+
+	lastSeen := time.Now().Add(-2 * time.Hour)
+	settings := settingsData{
+		baseData: base,
+		Host:     host,
+		Users: []models.User{
+			{ID: 1, Username: "admin", Role: "admin", AuthMethod: "either", LastLoginAt: &lastSeen, TOTPEnabled: true},
+			{ID: 2, Username: "ops", Role: "operator", AuthMethod: "password", MaxInstances: 5},
+			{ID: 3, Username: "auditor", Role: "viewer", AuthMethod: "sso", LastLoginAt: &lastSeen},
+		},
+		Usage:             map[int64]int{1: 2, 2: 1},
+		Links:             map[int64][]string{3: {"Google Workspace"}},
+		S3Configured:      true,
+		S3Bucket:          "incus-backups",
+		S3Endpoint:        "s3.eu-west-1.amazonaws.com",
+		S3Region:          "eu-west-1",
+		S3Prefix:          "peaceful-cloud",
+		S3AccessKeyMasked: "AKI••••••••23",
+		CaddyEnabled:      true,
+		SessionCount:      2,
+		SessionTTL:        168,
+		Sessions: []sessionView{
+			{ID: "a1", IP: "203.0.113.4", Device: "Chrome on macOS", CreatedAt: time.Now().Add(-3 * time.Hour), Current: true},
+			{ID: "b2", IP: "198.51.100.7", Device: "Firefox on Linux", CreatedAt: time.Now().Add(-26 * time.Hour)},
+		},
+		Providers: []sso.ProviderView{
+			{ID: 1, Name: "Google Workspace", Issuer: "https://accounts.google.com", ClientID: "123.apps.googleusercontent.com", HasSecret: true, DefaultRole: "viewer", RequireMFA: true, Enabled: true, Provisioning: "domains", AllowedDomains: "example.com", CallbackURL: "https://console.example.com/auth/sso/1/callback"},
+		},
+		SSOKeySet:        true,
+		MetricsInterval:  60,
+		MetricsRetention: 168,
+		JobWorkers:       3,
+		RunningCount:     2,
+	}
+	for _, tab := range []string{"account", "security", "users", "sso", "workspace"} {
+		data := settings
+		data.Tab = tab
+		file := "settings-" + tab
+		if tab == "account" {
+			file = "settings"
+		}
+		pages = append(pages, previewPage{file: file, page: "settings", data: data})
 	}
 
 	return append(tabs, pages...)
@@ -344,6 +372,15 @@ func previewInstances() []instances.Instance {
 		if inst.Running {
 			inst.StartedAt = now.Add(-4 * time.Hour)
 			inst.Domains = []models.Domain{{ID: 1, InstanceName: name, Domain: domain, Port: 80}}
+			if ip != "" {
+				inst.IPs = []string{ip, "fd42:1af7:b328:716c:1266:6aff:fee4:5fbd"}
+			}
+			if name == "wp-example" {
+				inst.DedicatedIPs = []models.DedicatedIP{{
+					ID: 1, PublicIP: "203.0.113.50", Network: "incusbr0", Label: "Primary web",
+					InstanceName: name, TargetIP: ip, SNAT: true,
+				}}
+			}
 		}
 		return inst
 	}
