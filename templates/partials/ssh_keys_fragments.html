@@ -1,23 +1,25 @@
-{{- /* SSH key vault fragments. Every form targets #ssh-keys-card-body and
-       swaps its innerHTML, so one response refreshes the list, the flash and
-       the one-time private key region together. Context: sshKeysFragmentData
-       (HTMX) or sshKeysData (full page) — both expose the same fields. */ -}}
+{{- /* SSH key vault fragments. Forms target #ssh-keys-card-body and swap its
+       innerHTML, refreshing flash feedback, any one-time generated private key,
+       and the saved keys list together. Context: sshKeysFragmentData (HTMX)
+       or sshKeysData (full page). */ -}}
 
 {{define "ssh_key_secret"}}
 {{if .PrivateKey}}
-<div class="flash flash-ok" style="margin-bottom:14px">
-  <strong>New private key — save it now.</strong> It is not stored on the server and cannot be shown again.
-</div>
-<div class="field" style="margin-bottom:16px">
-  <label for="new-private-key">Private key for {{.PrivateKeyName}}</label>
-  <textarea id="new-private-key" class="mono" rows="11" readonly data-select-on-click>{{.PrivateKey}}</textarea>
-  <div class="btn-row mt-8">
-    <button class="btn btn-sm btn-primary" type="button"
-            data-copy-target="#new-private-key">Copy private key</button>
-    <button class="btn btn-sm" type="button"
-            data-download-target="#new-private-key" data-download-name="{{.PrivateKeyName}}">Download .pem</button>
+<div class="card ssh-secret-card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Save private key: {{.PrivateKeyName}}</div>
+      <p class="card-sub">Shown once and never stored on the server. Set permissions with <span class="mono">chmod 600</span>.</p>
+    </div>
+    <span class="pill pill-warn">one-time</span>
   </div>
-  <p class="hint">Store it somewhere safe and set permissions, e.g. <span class="mono">chmod 600 key.pem</span>. Losing it cannot be recovered — generate a new key instead.</p>
+  <div class="field">
+    <textarea id="new-private-key" class="mono" rows="9" readonly data-select-on-click aria-label="Generated private key">{{.PrivateKey}}</textarea>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-sm btn-primary" type="button" data-copy-target="#new-private-key">Copy private key</button>
+    <button class="btn btn-sm" type="button" data-download-target="#new-private-key" data-download-name="{{.PrivateKeyName}}">Download .pem</button>
+  </div>
 </div>
 {{end}}
 {{end}}
@@ -30,47 +32,60 @@
 {{end}}
 
 {{define "ssh_keys_list"}}
-<div id="ssh-keys-list">
+<div id="ssh-keys-list" class="user-list">
   {{if .Keys}}
   {{range .Keys}}
-  <div class="snap-row" style="padding:10px 0;align-items:center">
+  <div class="user-row">
+    <span class="device-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3l1 1-2 2 1 1-2 2-1-1-3.2 3.2"/></svg>
+    </span>
     <div class="grow">
-      <div class="snap-name" style="font-size:13px">{{.Name}}</div>
-      <div class="snap-meta">{{.Fingerprint}}</div>
-      <div class="snap-meta mono truncate" style="max-width:560px">{{.PublicKey}}</div>
-    </div>
-    {{if canWrite $.User}}
-    <div class="row-tight">
-      <details class="disclosure">
-        <summary>Rename</summary>
-        <div class="disclosure-body">
-          <form method="post" action="/ssh-keys/{{.ID}}/rename"
-                hx-post="/ssh-keys/{{.ID}}/rename" hx-target="#ssh-keys-card-body" hx-swap="innerHTML"
-                hx-disabled-elt="find button">
-            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <div class="row-tight">
-              <input type="text" name="name" value="{{.Name}}" maxlength="64" required aria-label="New name for {{.Name}}">
-              <button class="btn btn-sm" type="submit">Save</button>
-            </div>
-          </form>
+      <div class="user-line">
+        <div class="grow">
+          <div class="snap-name">{{.Name}}</div>
+          <div class="snap-meta mono">{{.Fingerprint}}</div>
+          <div class="snap-meta mono key-preview">{{.PublicKey}}</div>
         </div>
-      </details>
-      <form method="post" action="/ssh-keys/{{.ID}}/delete"
-            hx-post="/ssh-keys/{{.ID}}/delete" hx-target="#ssh-keys-card-body" hx-swap="innerHTML"
-            hx-disabled-elt="find button"
-            hx-confirm="Delete key {{.Name}}? Instances that already have it installed keep a copy until rebuilt."
-            data-confirm="Delete key {{.Name}}? Instances that already have it installed keep a copy until rebuilt.">
-        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-        <button class="icon-btn" type="submit" title="Delete {{.Name}}" style="color:var(--red)">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>
-        </button>
-      </form>
+        {{if canWrite $.User}}
+        <form method="post" action="/ssh-keys/{{.ID}}/delete"
+              hx-post="/ssh-keys/{{.ID}}/delete" hx-target="#ssh-keys-card-body" hx-swap="innerHTML"
+              hx-disabled-elt="find button"
+              hx-confirm="Delete key {{.Name}}? Instances that already have it keep a copy until rebuilt."
+              data-confirm="Delete key {{.Name}}? Instances that already have it keep a copy until rebuilt.">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="icon-btn icon-btn-danger" type="submit" title="Delete {{.Name}}" aria-label="Delete {{.Name}}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>
+          </button>
+        </form>
+        {{end}}
+      </div>
+      <div class="user-actions">
+        <button class="btn btn-sm" type="button" data-copy="{{.PublicKey}}">Copy public key</button>
+        {{if canWrite $.User}}
+        <details class="disclosure disclosure-inline">
+          <summary>Rename</summary>
+          <div class="disclosure-body">
+            <form method="post" action="/ssh-keys/{{.ID}}/rename"
+                  hx-post="/ssh-keys/{{.ID}}/rename" hx-target="#ssh-keys-card-body" hx-swap="innerHTML"
+                  hx-disabled-elt="find button">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <div class="row-tight">
+                <input class="input-sm" type="text" name="name" value="{{.Name}}" maxlength="64" required aria-label="New name for {{.Name}}">
+                <button class="btn btn-sm" type="submit">Save</button>
+              </div>
+            </form>
+          </div>
+        </details>
+        {{end}}
+      </div>
     </div>
-    {{end}}
   </div>
   {{end}}
   {{else}}
-  <p class="muted small" style="margin:6px 0">No saved keys yet. Add a public key or generate a new keypair below.</p>
+  <div class="empty">
+    <h3>No SSH keys saved</h3>
+    <p>{{if canWrite .User}}Add a public key or generate a new keypair to use when launching instances.{{else}}No keys are saved for your account yet.{{end}}</p>
+  </div>
   {{end}}
 </div>
 {{end}}
@@ -82,60 +97,15 @@
 </div>
 
 {{template "ssh_key_secret" .}}
-{{template "ssh_keys_list" .}}
 
-{{if canWrite .User}}
-<div class="field-row mt-16">
-  <details class="disclosure" open>
-    <summary>Add a public key</summary>
-    <div class="disclosure-body">
-      <form method="post" action="/ssh-keys" enctype="multipart/form-data"
-            hx-post="/ssh-keys" hx-encoding="multipart/form-data"
-            hx-target="#ssh-keys-card-body" hx-swap="innerHTML" hx-disabled-elt="find button"
-            data-reset-after-request>
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <div class="field">
-          <label for="key-name">Name</label>
-          <input id="key-name" name="name" type="text" maxlength="64" required placeholder="laptop">
-          <p class="hint">A short label you will recognise, e.g. "laptop" or "workstation".</p>
-        </div>
-        <div class="field mt-8">
-          <label for="public-key">Public key</label>
-          <textarea id="public-key" name="public_key" class="mono" rows="3"
-                    placeholder="ssh-ed25519 AAAA..." spellcheck="false"></textarea>
-        </div>
-        <div class="field mt-8">
-          <label for="key-file">Or upload a .pub file</label>
-          <input id="key-file" name="key_file" type="file" accept=".pub,text/plain">
-          <p class="hint">Paste a key above or choose a file — the file wins if both are given.</p>
-        </div>
-        <div class="btn-row mt-8">
-          <button class="btn btn-sm btn-primary" type="submit">Add key</button>
-        </div>
-      </form>
+<div class="card" id="ssh-keys-card">
+  <div class="card-head">
+    <div class="grow">
+      <div class="card-title">Saved keys</div>
+      <p class="card-sub">Only public keys are stored. Deleting a key does not affect running instances.</p>
     </div>
-  </details>
-
-  <details class="disclosure">
-    <summary>Generate a new keypair</summary>
-    <div class="disclosure-body">
-      <form method="post" action="/ssh-keys/generate"
-            hx-post="/ssh-keys/generate" hx-target="#ssh-keys-card-body" hx-swap="innerHTML"
-            hx-disabled-elt="find button" data-reset-after-request>
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <div class="field">
-          <label for="gen-key-name">Name</label>
-          <input id="gen-key-name" name="name" type="text" maxlength="64" required placeholder="laptop">
-          <p class="hint">Generates an Ed25519 keypair. Only the public key is saved; the private key is shown once and never stored.</p>
-        </div>
-        <div class="btn-row mt-8">
-          <button class="btn btn-sm btn-primary" type="submit">Generate keypair</button>
-        </div>
-      </form>
-    </div>
-  </details>
+    <span class="pill">{{len .Keys}}</span>
+  </div>
+  {{template "ssh_keys_list" .}}
 </div>
-{{else}}
-<p class="muted small" style="margin:6px 0">Read-only access: you can view keys but cannot add, generate, rename or delete them.</p>
-{{end}}
 {{end}}

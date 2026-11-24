@@ -4,36 +4,70 @@
   <div class="page-head">
     <div class="grow">
       <h1>SSH keys</h1>
-      <p class="page-sub">Your personal library of server access keys. Keys are isolated to your account: no other tenant can see or use them, and they are offered when you create an instance.</p>
+      <p class="page-sub">Personal public keys offered when creating instances.</p>
     </div>
   </div>
 
-  {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
-  {{if .Notice}}<div class="flash flash-ok">{{.Notice}}</div>{{end}}
-
-  <div class="card" id="ssh-keys-card">
-    <div class="card-head">
-      <div class="grow">
-        <div class="card-title">Saved keys</div>
-        <div class="card-sub">Only public keys are stored. Private keys, when generated here, are shown once and never saved.</div>
-      </div>
-      <span class="muted small">{{len .Keys}} key{{if ne (len .Keys) 1}}s{{end}}</span>
-    </div>
-    <div id="ssh-keys-card-body" style="padding:0 18px 18px">
+  {{if canWrite .User}}
+  <div class="split">
+    <div class="split-main" id="ssh-keys-card-body">
       {{template "ssh_keys_body" .}}
     </div>
-  </div>
 
-  <div class="card mt-24">
-    <div class="card-head">
-      <div class="grow"><div class="card-title">How keys are used</div></div>
+    <div class="split-side">
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Add public key</div>
+            <p class="card-sub">Paste an existing key or upload a <span class="mono">.pub</span> file.</p>
+          </div>
+        </div>
+        <form method="post" action="/ssh-keys" enctype="multipart/form-data"
+              hx-post="/ssh-keys" hx-encoding="multipart/form-data"
+              hx-target="#ssh-keys-card-body" hx-swap="innerHTML" hx-disabled-elt="find button"
+              data-reset-after-request>
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="key-name">Name</label>
+            <input id="key-name" name="name" type="text" maxlength="64" required placeholder="laptop">
+          </div>
+          <div class="field">
+            <label for="public-key">Public key</label>
+            <textarea id="public-key" name="public_key" class="mono" rows="3"
+                      placeholder="ssh-ed25519 AAAA..." spellcheck="false"></textarea>
+          </div>
+          <div class="field">
+            <label for="key-file">Or upload <span class="mono">.pub</span> file</label>
+            <input id="key-file" name="key_file" type="file" accept=".pub,text/plain" class="file-input">
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">Add key</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <div class="card-title">Generate keypair</div>
+            <p class="card-sub">Creates an Ed25519 key. The private key is shown once and never stored.</p>
+          </div>
+        </div>
+        <form method="post" action="/ssh-keys/generate"
+              hx-post="/ssh-keys/generate" hx-target="#ssh-keys-card-body" hx-swap="innerHTML"
+              hx-disabled-elt="find button" data-reset-after-request>
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <div class="field">
+            <label for="gen-key-name">Name</label>
+            <input id="gen-key-name" name="name" type="text" maxlength="64" required placeholder="workstation">
+          </div>
+          <button class="btn btn-block" type="submit">Generate keypair</button>
+        </form>
+      </div>
     </div>
-    <ol class="muted small" style="margin:0;padding-left:18px;line-height:1.9">
-      <li>On instance creation, pick a saved key — it is installed for <span class="mono">root</span> and for the web-console account.</li>
-      <li>Instances created with a key and no password have password login disabled; SSH becomes key-only.</li>
-      <li>The in-browser terminal does not need an SSH password.</li>
-      <li>Deleting a key here does not change instances that already have it installed — rebuild one to rotate.</li>
-    </ol>
   </div>
+  {{else}}
+  <div id="ssh-keys-card-body">
+    {{template "ssh_keys_body" .}}
+  </div>
+  {{end}}
 </div>
 {{end}}

@@ -1074,6 +1074,15 @@ details.menu > summary.user-chip svg { color: var(--text-faint); }
   box-shadow: none;
   background: transparent;
 }
+.page-actions > .btn,
+.page-actions > details.menu > summary.btn {
+  height: 38px;
+  padding: 0 14px;
+}
+.page-actions > details.menu > summary.btn {
+  width: 38px;
+  padding: 0;
+}
 .action-group .btn:hover { background: var(--surface-alt); }
 .action-group form + form .btn,
 .action-group .btn + .btn { border-left: 1px solid var(--border); }
@@ -1656,7 +1665,7 @@ details.disclosure .disclosure-body { padding: 0 14px 14px; }
 .snap-row:last-child { border-bottom: 0; }
 .snap-row .grow { flex: 1 1 auto; min-width: 0; }
 .snap-name { font-weight: 600; color: var(--text); }
-.snap-meta { margin-top: 2px; font-size: 12px; color: var(--text-muted); }
+.snap-meta { margin-top: 2px; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
 
 /* ---------- Jobs --------------------------------------------------------- */
 
@@ -1864,12 +1873,49 @@ input.quota-input { width: 76px; }
 details.disclosure.disclosure-inline { margin-top: 0; border-radius: 7px; }
 details.disclosure.disclosure-inline > summary { padding: 5px 10px; font-size: 12.5px; }
 details.disclosure.disclosure-inline .disclosure-body { padding: 0 10px 10px; }
-details.disclosure.disclosure-inline .row-tight input { min-width: 200px; }
+details.disclosure.disclosure-inline .row-tight { flex-wrap: wrap; }
+details.disclosure.disclosure-inline .row-tight input { flex: 1 1 160px; min-width: 0; }
 
 details.disclosure.sso-edit { margin: 0 0 6px; }
 
 .icon-btn.icon-btn-danger { color: var(--red); }
 .icon-btn.icon-btn-danger:hover { background: var(--red-bg); border-color: var(--red-border); color: var(--red); }
+
+.key-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ssh-secret-card {
+  border-color: var(--green-border);
+  background: linear-gradient(135deg, var(--green-bg) 0%, var(--surface) 45%);
+}
+.file-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.file-input::file-selector-button {
+  margin-right: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.file-input::file-selector-button:hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+}
+#ssh-keys-flash:empty { display: none; }
 
 .role-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .role-list li { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
@@ -2095,7 +2141,9 @@ body.sidebar-collapsed .sidebar { display: none; }
   .toolbar-search { max-width: none; }
   .toolbar-meta { display: none; }
   .inst-grid { grid-template-columns: 1fr; }
-  .action-group { width: 100%; }
+  .page-actions { width: 100%; }
+  .page-actions > .btn { flex: 1 1 0; }
+  .action-group { order: 2; width: 100%; }
   .action-group form { flex: 1 1 auto; }
   .action-group .btn { width: 100%; }
 }

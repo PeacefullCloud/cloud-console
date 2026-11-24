@@ -292,6 +292,13 @@ func previewPages() []previewPage {
 				{ID: "7a11", Kind: "backup.create", Target: "wp-example", Status: "done", Progress: 100, Message: "Completed", CreatedBy: "admin", CreatedAt: time.Now().Add(-15 * time.Hour)},
 			},
 		}},
+		{file: "ssh_keys", page: "ssh_keys", data: sshKeysData{
+			baseData: base,
+			Keys: []models.SSHKey{
+				{ID: 1, OwnerID: 1, Name: "macbook-pro", Fingerprint: "SHA256:u4xP9mK8v2L0aNqR7tW5zC1yB3eD6fG8hJ2kL4mN9oP", PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0bS0XKz5K5U3zR2Q8mtexamplekey1234567890 macbook-pro"},
+				{ID: 2, OwnerID: 1, Name: "deploy-ci", Fingerprint: "SHA256:9aB8cD7eF6gH5iJ4kL3mN2oP1qR0sT9uV8wX7yZ6aB5", PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAnotherExamplePublicKeyStringForDeploymentCI9876543 deploy-ci"},
+			},
+		}},
 	}
 
 	lastSeen := time.Now().Add(-2 * time.Hour)
