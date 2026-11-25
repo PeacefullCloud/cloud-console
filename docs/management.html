@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture &amp; Management Guide — Peaceful Cloud Console</title>
+  <meta name="description" content="How Peaceful Cloud Console works under the hood and how to manage users, RBAC, SSO, dedicated public IPs, domains, web terminal security, snapshots, backups, and upgrades.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="canonical" href="https://peacefullcloud.github.io/cloud-console/management.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Architecture &amp; Management Guide — Peaceful Cloud Console">
+  <meta property="og:description" content="Day-2 operations guide covering architecture, user roles, tenant isolation, dedicated IPs, terminal security, backups, monitoring, and upgrades.">
+  <meta property="og:url" content="https://peacefullcloud.github.io/cloud-console/management.html">
+  <meta property="og:image" content="https://peacefullcloud.github.io/cloud-console/img/Instance%20Networking-%C2%B7-Peaceful-Cloud-Console.webp">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="stylesheet" href="./assets/styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Architecture & Management Guide — Peaceful Cloud Console",
+    "description": "Operations, security model, networking, backups, monitoring, and maintenance for Peaceful Cloud Console.",
+    "url": "https://peacefullcloud.github.io/cloud-console/management.html"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="./index.html">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>Peaceful <strong>Cloud Console</strong></span>
+      </a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="site-nav">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+      </button>
+      <nav class="site-nav" id="site-nav" aria-label="Primary navigation">
+        <a href="./index.html">Overview</a>
+        <a href="./index.html#features">Features</a>
+        <a href="./installation.html">Installation</a>
+        <a href="./management.html" aria-current="page">Management</a>
+        <a class="nav-cta" href="https://github.com/PeacefullCloud/cloud-console" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="docs-hero">
+    <div class="container">
+      <h1>Architecture &amp; Management Guide</h1>
+      <p>Understand how Peaceful Cloud Console orchestrates Incus, Caddy, and SQLite, and how to administer users, networks, backups, and upgrades.</p>
+    </div>
+  </section>
+
+  <main id="main" class="container docs-layout">
+    <aside class="docs-toc" aria-label="On this page">
+      <h2>On this page</h2>
+      <ul>
+        <li><a href="#architecture">How it works</a></li>
+        <li><a href="#rbac">Users, roles &amp; quotas</a></li>
+        <li><a href="#security">Security, 2FA &amp; SSO</a></li>
+        <li><a href="#networking">Domains &amp; dedicated IPs</a></li>
+        <li><a href="#terminal">Web terminal &amp; SFTP</a></li>
+        <li><a href="#backups">Snapshots &amp; backups</a></li>
+        <li><a href="#monitoring">Monitoring &amp; audit logs</a></li>
+        <li><a href="#upgrades">Upgrades &amp; data backup</a></li>
+      </ul>
+    </aside>
+
+    <div class="docs-content">
+      <section class="doc-section" id="architecture">
+        <h2>How it works</h2>
+        <p>Peaceful Cloud Console uses a single Go process with no external message queue or cache:</p>
+        <div class="code-wrap">
+          <pre><code>Browser (HTML + HTMX + wterm WASM)
+   │  HTTPS via Caddy
+   ▼
+Go Backend (cloud-console)
+   ├── SQLite (users, sessions, domains, dedicated IPs, jobs, metrics, audit log)
+   ├── Incus Unix Socket (containers, VMs, ZFS storage, snapshots, exec PTY/SFTP)
+   └── Caddy Admin API / Caddyfile (automatic TLS + reverse proxy routes)</code></pre>
+        </div>
+        <ul>
+          <li><strong>Incus owns infrastructure state:</strong> running status, private IPs, CPU/memory counters, storage pools, and snapshots are read directly from Incus.</li>
+          <li><strong>SQLite owns console metadata:</strong> accounts, hashed sessions, ownership mappings, domains, backup records, sampled metrics, and audit logs.</li>
+          <li><strong>Background job worker pool:</strong> long-running actions (instance provisioning, rebuilds, backups) run in-process with live progress polling in the UI.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="rbac">
+        <h2>Users, roles &amp; quotas</h2>
+        <p>Access is enforced by role and per-instance ownership across all pages, APIs, and WebSockets:</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Role</th><th>Scope</th><th>Capabilities</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>admin</code></td><td>Entire host</td><td>Manage all instances, host storage/networks, dedicated IP pool, users, quotas, SSO providers, and Caddy config.</td></tr>
+              <tr><td><code>operator</code></td><td>Owned instances</td><td>Create, start, stop, resize, snapshot, backup, attach domains, and open web terminal/SFTP on owned instances.</td></tr>
+              <tr><td><code>viewer</code></td><td>Owned instances</td><td>Read-only access to owned instance metrics, status, domains, and logs (no terminal or mutating actions).</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Administrators can manage accounts, reset locked-out user passwords, set per-user instance quotas (<code>0</code> = unlimited up to <code>CONSOLE_MAX_INSTANCES</code>), and reassign instance ownership in <strong>Settings → Users</strong> and each instance's <strong>Settings</strong> tab.</p>
+      </section>
+
+      <section class="doc-section" id="security">
+        <h2>Security, 2FA &amp; SSO</h2>
+        <ul>
+          <li><strong>Sessions &amp; CSRF:</strong> 32-byte random session tokens are SHA-256 hashed before storage; <code>HttpOnly</code>, <code>SameSite=Lax</code> cookies and double-submit CSRF tokens guard every mutating request.</li>
+          <li><strong>Two-Factor Authentication (TOTP):</strong> Users can enroll an authenticator app and receive 8 one-time recovery codes. TOTP secrets are encrypted at rest with <code>CONSOLE_SECRET_KEY</code> (or <code>&lt;data_dir&gt;/secret.key</code>).</li>
+          <li><strong>OIDC Single Sign-On:</strong> Admins can configure OIDC providers under <strong>Settings → SSO</strong>. Set <code>CONSOLE_SSO_KEY</code> before adding providers so client secrets are encrypted at rest.</li>
+          <li><strong>Rate limiting:</strong> Failed password and 2FA verifications are throttled in memory by username and client IP.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="networking">
+        <h2>Domains &amp; dedicated public IPs</h2>
+        <h3>Domains &amp; automatic HTTPS</h3>
+        <p>Instances receive private RFC1918 addresses on the Incus bridge. Attaching a domain in an instance's <strong>Domains</strong> tab updates Caddy and automatically issues/renews Let's Encrypt TLS certificates once DNS points to the host.</p>
+        <p>When <code>CONSOLE_PLATFORM_DOMAIN</code> is configured (e.g. <code>cloud.example.com</code>), instances can also receive instant wildcard subdomains without manual DNS per instance.</p>
+
+        <h3>Dedicated public IPs (Admin-only pool)</h3>
+        <p>If your server has additional routed public IPs or secondary Elastic IPs, administrators can register them under <strong>Networking → Add dedicated IP</strong> and assign them 1:1 to an instance (from <strong>Networking</strong> or the instance's <strong>Networking</strong> tab). The console configures Incus network forwards with 1:1 port forwarding and SNAT where supported.</p>
+
+        <h3>Port forwarding &amp; bridge isolation</h3>
+        <p>Individual TCP or UDP ports (external ports <code>10000–60000</code>) can be exposed per instance from the <strong>Networking</strong> tab. New instances on the bridge have MAC and IPv4/IPv6 filtering enabled to prevent ARP or IP spoofing between tenants.</p>
+      </section>
+
+      <section class="doc-section" id="terminal">
+        <h2>Web terminal &amp; SFTP file manager</h2>
+        <p>The browser terminal attaches to an interactive Incus <code>exec</code> session as <code>cloud-user</code> (configurable via <code>CONSOLE_TERMINAL_LOGIN_USER</code>) without exposing SSH ports or storing instance private keys in the browser.</p>
+        <ul>
+          <li>New instances are provisioned with passwordless sudo for <code>cloud-user</code> and any selected vault SSH keys.</li>
+          <li>The companion SFTP panel connects through Incus <code>exec</code> to <code>sftp-server</code> and closes automatically on logout, expiry, or password change.</li>
+          <li>For public deployments, set <code>CONSOLE_TERMINAL_ALLOWED_HOSTS</code> to your public console hostname to prevent DNS-rebinding attacks against the WebSocket endpoint.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="backups">
+        <h2>Snapshots &amp; backups</h2>
+        <ul>
+          <li><strong>Snapshots:</strong> Instant ZFS/storage copy-on-write checkpoints stored on the same pool. Set <code>CONSOLE_SNAPSHOT_INTERVAL_HOURS</code> &gt; <code>0</code> and <code>CONSOLE_SNAPSHOT_KEEP</code> to automate scheduled <code>auto-*</code> snapshots.</li>
+          <li><strong>Backups:</strong> Full portable instance archives written to <code>&lt;data_dir&gt;/backups</code> and optionally uploaded to S3-compatible object storage (configure <code>S3_ENDPOINT</code>, <code>S3_BUCKET</code>, <code>S3_ACCESS_KEY</code>, and <code>S3_SECRET_KEY</code>).</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="monitoring">
+        <h2>Monitoring, Prometheus &amp; audit logs</h2>
+        <ul>
+          <li><strong>Health check:</strong> <code>GET /healthz</code> returns <code>200 ok</code> when Incus is reachable, or <code>503</code> otherwise.</li>
+          <li><strong>Prometheus metrics:</strong> Set <code>CONSOLE_METRICS_TOKEN</code> and scrape <code>GET /metrics</code> with <code>Authorization: Bearer &lt;token&gt;</code>.</li>
+          <li><strong>Failure alerts:</strong> Set <code>CONSOLE_ALERT_WEBHOOK_URL</code> to send JSON webhook notifications when background jobs fail.</li>
+          <li><strong>Audit log:</strong> Every mutating action (logins, instance lifecycle, IP assignments, domain edits, user changes) is recorded in <strong>Activity</strong> and exportable to CSV by admins.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="upgrades">
+        <h2>Upgrades &amp; data backup</h2>
+        <p>SQLite schema migrations embedded in the binary apply automatically on startup.</p>
+        <h3>Safe upgrade steps</h3>
+        <ol>
+          <li>Back up your critical console state before upgrading:
+            <ul>
+              <li><code>&lt;data_dir&gt;/console.db</code> (console metadata)</li>
+              <li><code>&lt;data_dir&gt;/secret.key</code> (if <code>CONSOLE_SECRET_KEY</code> is not set in env)</li>
+              <li>Your <code>.env</code> / <code>console.env</code> (contains <code>CONSOLE_SSO_KEY</code> and integration secrets)</li>
+            </ul>
+          </li>
+          <li>Build or download the new <code>cloud-console</code> binary and replace the old binary.</li>
+          <li>Restart the service and check logs and <code>/healthz</code>:
+            <div class="code-wrap"><pre><code>sudo systemctl restart cloud-console
+curl -fsS http://127.0.0.1:8080/healthz</code></pre></div>
+          </li>
+        </ol>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>Peaceful Cloud Console · Architecture &amp; Management Docs</div>
+      <div class="footer-links">
+        <a href="./index.html">Overview</a>
+        <a href="./installation.html">Installation</a>
+        <a href="./management.html">Management</a>
+        <a href="https://github.com/PeacefullCloud/cloud-console" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./assets/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installation &amp; Deployment Guide — Peaceful Cloud Console</title>
+  <meta name="description" content="Step-by-step installation, host prerequisites, environment variables reference, systemd service setup, and Caddy HTTPS deployment guide for Peaceful Cloud Console.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="canonical" href="https://peacefullcloud.github.io/cloud-console/installation.html">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Installation &amp; Deployment Guide — Peaceful Cloud Console">
+  <meta property="og:description" content="Host setup, build instructions, complete environment variable reference, CLI flags, systemd units, and Caddy reverse proxy setup.">
+  <meta property="og:url" content="https://peacefullcloud.github.io/cloud-console/installation.html">
+  <meta property="og:image" content="https://peacefullcloud.github.io/cloud-console/img/Getting-started%20Mian%20dashboard-%C2%B7-Peaceful-Cloud-Console.webp">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="stylesheet" href="./assets/styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Installation & Deployment Guide — Peaceful Cloud Console",
+    "description": "Host prerequisites, build steps, environment variables, systemd deployment, and Caddy reverse proxy configuration.",
+    "url": "https://peacefullcloud.github.io/cloud-console/installation.html"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="./index.html">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>Peaceful <strong>Cloud Console</strong></span>
+      </a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="site-nav">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+      </button>
+      <nav class="site-nav" id="site-nav" aria-label="Primary navigation">
+        <a href="./index.html">Overview</a>
+        <a href="./index.html#features">Features</a>
+        <a href="./installation.html" aria-current="page">Installation</a>
+        <a href="./management.html">Management</a>
+        <a class="nav-cta" href="https://github.com/PeacefullCloud/cloud-console" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="docs-hero">
+    <div class="container">
+      <h1>Installation &amp; Deployment Guide</h1>
+      <p>Prepare your Incus host, build the single-binary console, configure environment variables, and deploy safely behind Caddy and systemd.</p>
+    </div>
+  </section>
+
+  <main id="main" class="container docs-layout">
+    <aside class="docs-toc" aria-label="On this page">
+      <h2>On this page</h2>
+      <ul>
+        <li><a href="#requirements">Requirements</a></li>
+        <li><a href="#host-setup">Host setup (Incus &amp; Caddy)</a></li>
+        <li><a href="#build">Build the binary</a></li>
+        <li><a href="#configuration">Configuration &amp; .env</a></li>
+        <li><a href="#env-vars">Environment variables</a></li>
+        <li><a href="#cli-flags">CLI flags</a></li>
+        <li><a href="#systemd">Systemd deployment</a></li>
+        <li><a href="#first-run">First run &amp; verification</a></li>
+      </ul>
+    </aside>
+
+    <div class="docs-content">
+      <section class="doc-section" id="requirements">
+        <h2>Requirements</h2>
+        <ul>
+          <li><strong>Linux server</strong> running <strong>Incus</strong> (<code>incusd</code>) with a local Unix socket (<code>/var/lib/incus/unix.socket</code>).</li>
+          <li><strong>Storage pool</strong> (ZFS recommended for instant copy-on-write snapshots).</li>
+          <li><strong>Go 1.26+</strong> to build from source (pure Go, including the SQLite driver—no CGO required).</li>
+          <li><strong>Caddy</strong> on the host for automatic HTTPS certificates and domain routing.</li>
+          <li><strong>Optional:</strong> any S3-compatible bucket (AWS S3, MinIO, Cloudflare R2, Backblaze B2) for off-site backups.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="host-setup">
+        <h2>Host setup (Incus &amp; Caddy)</h2>
+        <h3>1. Storage pool &amp; private bridge</h3>
+        <p>Ensure Incus has at least one storage pool and a managed NAT bridge (<code>incusbr0</code> by default) for instance private networking:</p>
+        <div class="code-wrap">
+          <pre><code>incus storage create default zfs size=100GiB
+incus network create incusbr0 ipv4.address=10.10.0.1/24 ipv4.nat=true</code></pre>
+        </div>
+
+        <h3>2. Caddy integration</h3>
+        <p>Enable Caddy's admin API in <code>/etc/caddy/Caddyfile</code> so the console can push domain updates without restarting Caddy, and import the console's site config if desired:</p>
+        <div class="code-wrap">
+          <pre><code>{
+    admin localhost:2019
+}
+
+# Optional if using CADDY_CONFIG_PATH instead of CADDY_ADMIN_URL:
+# import /etc/caddy/cloud-console.caddy</code></pre>
+        </div>
+        <div class="callout">
+          <strong>Tip:</strong> Put the console itself behind Caddy with HTTPS before exposing it to the internet, and set <code>CONSOLE_BASE_URL=https://console.example.com</code>.
+        </div>
+      </section>
+
+      <section class="doc-section" id="build">
+        <h2>Build the binary</h2>
+        <p>Templates, stylesheets, JavaScript, fonts, and the WebAssembly terminal assets are embedded directly into the binary:</p>
+        <div class="code-wrap">
+          <pre><code>git clone https://github.com/PeacefullCloud/cloud-console
+cd cloud-console
+
+# Static release build
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=1.0.0" -o cloud-console .</code></pre>
+        </div>
+      </section>
+
+      <section class="doc-section" id="configuration">
+        <h2>Configuration &amp; <code>.env</code></h2>
+        <p>Peaceful Cloud Console loads <code>.env</code> from its working directory automatically (or the path in <code>CONSOLE_ENV_FILE</code>). Real environment variables and systemd <code>Environment=</code> directives always override values in <code>.env</code>.</p>
+        <div class="code-wrap">
+          <pre><code>cp .env.sample .env
+chmod 600 .env</code></pre>
+        </div>
+        <p>Before enabling OIDC SSO or TOTP in production, generate strong encryption keys:</p>
+        <div class="code-wrap">
+          <pre><code># 32-byte hex keys for SSO client secrets and TOTP secrets
+openssl rand -hex 32   # use for CONSOLE_SSO_KEY
+openssl rand -hex 32   # use for CONSOLE_SECRET_KEY</code></pre>
+        </div>
+      </section>
+
+      <section class="doc-section" id="env-vars">
+        <h2>Environment variables reference</h2>
+
+        <h3>Core, HTTP &amp; Bootstrap</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>CONSOLE_ADDR</code></td><td><code>127.0.0.1:8080</code></td><td>HTTP listen address. Keep loopback when Caddy sits in front.</td></tr>
+              <tr><td><code>CONSOLE_BASE_URL</code></td><td><code>http://localhost:8080</code></td><td>Public URL of the console (used for SSO callbacks and Caddy config).</td></tr>
+              <tr><td><code>CONSOLE_DATA_DIR</code></td><td><code>./data</code></td><td>Directory for SQLite database, backups, and generated key files.</td></tr>
+              <tr><td><code>CONSOLE_DB_PATH</code></td><td><code>&lt;data&gt;/console.db</code></td><td>Override path to the SQLite database file.</td></tr>
+              <tr><td><code>CONSOLE_ENV_FILE</code></td><td><code>./.env</code></td><td>Explicit path to an environment file.</td></tr>
+              <tr><td><code>CONSOLE_SECURE_COOKIES</code></td><td>Auto (<code>true</code> for <code>https://</code>)</td><td>Sets the <code>Secure</code> flag on session and CSRF cookies.</td></tr>
+              <tr><td><code>CONSOLE_TRUSTED_PROXIES</code></td><td><code>127.0.0.0/8,::1/128</code></td><td>Comma-separated proxy IPs/CIDRs (or <code>none</code>) trusted for <code>X-Forwarded-For</code>.</td></tr>
+              <tr><td><code>CONSOLE_SESSION_TTL_HOURS</code></td><td><code>168</code></td><td>Session lifetime in hours (default 7 days).</td></tr>
+              <tr><td><code>CONSOLE_MAX_INSTANCES</code></td><td><code>100</code></td><td>Host-wide instance limit (<code>0</code> = unlimited).</td></tr>
+              <tr><td><code>CONSOLE_ADMIN_USER</code></td><td><code>admin</code></td><td>Bootstrap administrator username when the user table is empty.</td></tr>
+              <tr><td><code>CONSOLE_ADMIN_PASSWORD</code></td><td><em>(random)</em></td><td>Initial admin password. If empty, generated to <code>&lt;data&gt;/initial-admin-password</code>.</td></tr>
+              <tr><td><code>CONSOLE_DEV</code></td><td><code>false</code></td><td>Read templates and static assets from disk for live UI development.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Incus &amp; Networking</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>INCUS_SOCKET</code></td><td><code>/var/lib/incus/unix.socket</code></td><td>Path to Incus daemon Unix socket.</td></tr>
+              <tr><td><code>INCUS_PROJECT</code></td><td><em>(default)</em></td><td>Incus project name to operate in.</td></tr>
+              <tr><td><code>CADDY_ADMIN_URL</code></td><td><em>(unset)</em></td><td>Preferred Caddy control endpoint, e.g. <code>http://localhost:2019</code>.</td></tr>
+              <tr><td><code>CADDY_CONFIG_PATH</code></td><td><em>(unset)</em></td><td>Alternative: file path where the console writes its Caddyfile.</td></tr>
+              <tr><td><code>CADDY_RELOAD_CMD</code></td><td><code>caddy reload --config &lt;path&gt;</code></td><td>Reload command when <code>CADDY_ADMIN_URL</code> is unset.</td></tr>
+              <tr><td><code>CONSOLE_PLATFORM_DOMAIN</code></td><td><em>(unset)</em></td><td>Optional wildcard domain (e.g. <code>cloud.example.com</code>) for instant instance URLs.</td></tr>
+              <tr><td><code>CONSOLE_PUBLIC_IP</code></td><td><em>(auto-detect)</em></td><td>Shared host public IP displayed in DNS setup instructions.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Security &amp; SSO</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>CONSOLE_SSO_KEY</code></td><td><em>(unset)</em></td><td>64-hex key (or passphrase / <code>argon2:...</code>) used to encrypt OIDC client secrets.</td></tr>
+              <tr><td><code>CONSOLE_SECRET_KEY</code></td><td><code>&lt;data&gt;/secret.key</code></td><td>Key encrypting TOTP seeds at rest. Auto-generated in data dir if unset.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Web Terminal</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>CONSOLE_TERMINAL_ENABLED</code></td><td><code>true</code></td><td>Enable or disable the browser terminal and SFTP panel.</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_LOGIN_USER</code></td><td><code>cloud-user</code></td><td>Unprivileged account created inside instances for terminal login.</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_MAX_SESSIONS</code></td><td><code>20</code></td><td>Global concurrent terminal session cap (<code>0</code> = unlimited).</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_MAX_PER_USER</code></td><td><code>3</code></td><td>Max concurrent terminal sessions per user.</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_IDLE_TIMEOUT_SECONDS</code></td><td><code>900</code></td><td>Idle disconnect timeout in seconds.</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_MAX_SESSION_SECONDS</code></td><td><code>0</code></td><td>Hard max session duration in seconds (<code>0</code> = no limit).</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_MAX_INPUT_BYTES</code></td><td><code>262144</code></td><td>Max WebSocket client-to-guest input frame size (min 1024).</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_ALLOWED_HOSTS</code></td><td><em>(unset)</em></td><td>Comma-separated public hostnames allowed for WebSocket connections.</td></tr>
+              <tr><td><code>CONSOLE_TERMINAL_ALLOWED_ORIGINS</code></td><td><em>(unset)</em></td><td>Extra permitted WebSocket origins.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Backups, Monitoring &amp; Alerts</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>S3_ENDPOINT</code></td><td><em>(unset)</em></td><td>S3-compatible endpoint (e.g. <code>s3.eu-west-1.amazonaws.com</code>).</td></tr>
+              <tr><td><code>S3_BUCKET</code></td><td><em>(unset)</em></td><td>Target bucket name for off-site backups.</td></tr>
+              <tr><td><code>S3_ACCESS_KEY</code> / <code>S3_SECRET_KEY</code></td><td><em>(unset)</em></td><td>S3 credentials.</td></tr>
+              <tr><td><code>S3_REGION</code> / <code>S3_PREFIX</code> / <code>S3_USE_SSL</code></td><td><code>us-east-1</code> / <code>peaceful-cloud</code> / <code>true</code></td><td>S3 region, key prefix, and TLS toggle.</td></tr>
+              <tr><td><code>CONSOLE_METRICS_INTERVAL</code></td><td><code>60</code></td><td>Metric sampling interval in seconds (minimum 10).</td></tr>
+              <tr><td><code>CONSOLE_METRICS_RETENTION_HOURS</code></td><td><code>720</code></td><td>Metric history retention in hours (default 30 days).</td></tr>
+              <tr><td><code>CONSOLE_SNAPSHOT_INTERVAL_HOURS</code></td><td><code>0</code></td><td>Automatic snapshot interval across all instances (<code>0</code> = off).</td></tr>
+              <tr><td><code>CONSOLE_SNAPSHOT_KEEP</code></td><td><code>7</code></td><td>Number of automatic <code>auto-*</code> snapshots retained per instance.</td></tr>
+              <tr><td><code>CONSOLE_METRICS_TOKEN</code></td><td><em>(unset)</em></td><td>Bearer token enabling Prometheus scraping at <code>GET /metrics</code>.</td></tr>
+              <tr><td><code>CONSOLE_ALERT_WEBHOOK_URL</code></td><td><em>(unset)</em></td><td>Webhook URL receiving JSON failure alerts for background jobs.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="doc-section" id="cli-flags">
+        <h2>CLI flags</h2>
+        <p>Flags can override environment settings at startup:</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>-addr</code></td><td><em>(from env)</em></td><td>HTTP listen address (overrides <code>CONSOLE_ADDR</code>).</td></tr>
+              <tr><td><code>-socket</code></td><td><em>(from env)</em></td><td>Incus Unix socket path (overrides <code>INCUS_SOCKET</code>).</td></tr>
+              <tr><td><code>-workers</code></td><td><code>3</code></td><td>Number of concurrent background job workers.</td></tr>
+              <tr><td><code>-dev</code></td><td><code>false</code></td><td>Load templates and static files from disk.</td></tr>
+              <tr><td><code>-log-level</code></td><td><code>info</code></td><td>Log verbosity: <code>debug</code>, <code>info</code>, <code>warn</code>, or <code>error</code>.</td></tr>
+              <tr><td><code>-version</code></td><td><code>false</code></td><td>Print version and exit.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="doc-section" id="systemd">
+        <h2>Systemd deployment</h2>
+        <p>Install the binary to <code>/usr/local/bin/cloud-console</code>, place configuration in <code>/etc/peaceful-cloud/console.env</code> (mode <code>0600</code>), and create a systemd unit:</p>
+        <div class="code-wrap">
+          <pre><code># /etc/systemd/system/cloud-console.service
+[Unit]
+Description=Peaceful Cloud Console
+After=network-online.target incus.service
+Wants=incus.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+SupplementaryGroups=incus-admin
+StateDirectory=peaceful-cloud
+WorkingDirectory=/var/lib/peaceful-cloud
+EnvironmentFile=/etc/peaceful-cloud/console.env
+ExecStart=/usr/local/bin/cloud-console
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+        </div>
+        <p>Enable and start the service:</p>
+        <div class="code-wrap">
+          <pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now cloud-console</code></pre>
+        </div>
+
+        <h3>Caddy reverse proxy site block</h3>
+        <p>Proxy your console domain to <code>127.0.0.1:8080</code>. Caddy handles HTTPS certificates and WebSocket upgrades for the browser terminal automatically:</p>
+        <div class="code-wrap">
+          <pre><code>console.example.com {
+    reverse_proxy 127.0.0.1:8080
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="doc-section" id="first-run">
+        <h2>First run &amp; verification</h2>
+        <ol>
+          <li>Verify the health endpoint returns HTTP <code>200</code>:
+            <div class="code-wrap"><pre><code>curl -fsS http://127.0.0.1:8080/healthz</code></pre></div>
+          </li>
+          <li>If <code>CONSOLE_ADMIN_PASSWORD</code> was left empty, read the generated initial password from <code>&lt;data_dir&gt;/initial-admin-password</code> (mode <code>0600</code>).</li>
+          <li>Sign in as <code>admin</code>, change your password in <strong>Settings → Account</strong>, enable <strong>Two-factor authentication</strong>, and delete <code>initial-admin-password</code>.</li>
+        </ol>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>Peaceful Cloud Console · Installation &amp; Deployment Docs</div>
+      <div class="footer-links">
+        <a href="./index.html">Overview</a>
+        <a href="./installation.html">Installation</a>
+        <a href="./management.html">Management</a>
+        <a href="https://github.com/PeacefullCloud/cloud-console" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./assets/site.js" defer></script>
+</body>
+</html>

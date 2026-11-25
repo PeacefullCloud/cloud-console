@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://peacefullcloud.github.io/cloud-console/sitemap.xml

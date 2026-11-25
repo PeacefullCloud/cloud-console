@@ -463,20 +463,18 @@ func (s *Server) handleNetworking(w http.ResponseWriter, r *http.Request) {
 	networks := []networkInfo{}
 	if raw, err := s.App.Incus.Networks(); err == nil {
 		for _, n := range raw {
+			if !n.Managed {
+				continue
+			}
 			address := n.Config["ipv4.address"]
 			if address == "" {
 				address = n.Config["ipv6.address"]
 			}
 
-			managed := "no"
-			if n.Managed {
-				managed = "yes"
-			}
-
 			networks = append(networks, networkInfo{
 				Name:        n.Name,
 				Type:        n.Type,
-				Managed:     managed,
+				Managed:     "yes",
 				Address:     address,
 				UsedBy:      len(n.UsedBy),
 				Description: n.Description,

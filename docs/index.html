@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peaceful Cloud Console — Lightweight Incus Web Console for Containers &amp; VMs</title>
+  <meta name="description" content="Peaceful Cloud Console is a single-binary, Lightsail-style web console for Incus containers and VMs. Includes web terminal, SFTP file manager, Caddy HTTPS routing, dedicated IPs, snapshots, S3 backups, 2FA, and OIDC SSO.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="canonical" href="https://peacefullcloud.github.io/cloud-console/">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='23' font-size='19' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Peaceful Cloud Console — Incus Web Console for Containers &amp; VMs">
+  <meta property="og:description" content="Manage Incus instances on a single physical host with a web terminal, SFTP file manager, automatic Caddy HTTPS, snapshots, S3 backups, and multi-user RBAC.">
+  <meta property="og:url" content="https://peacefullcloud.github.io/cloud-console/">
+  <meta property="og:image" content="https://peacefullcloud.github.io/cloud-console/img/Getting-started%20Mian%20dashboard-%C2%B7-Peaceful-Cloud-Console.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Peaceful Cloud Console — Incus Web Console">
+  <meta name="twitter:description" content="Single-binary Go web console for Incus containers and VMs with web terminal, SFTP file manager, Caddy HTTPS, and S3 backups.">
+  <meta name="twitter:image" content="https://peacefullcloud.github.io/cloud-console/img/Getting-started%20Mian%20dashboard-%C2%B7-Peaceful-Cloud-Console.webp">
+
+  <link rel="stylesheet" href="./assets/styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Peaceful Cloud Console",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux",
+    "description": "A single-binary Lightsail-style web UI for managing Incus containers and virtual machines on a single physical server.",
+    "url": "https://peacefullcloud.github.io/cloud-console/",
+    "codeRepository": "https://github.com/PeacefullCloud/cloud-console",
+    "programmingLanguage": "Go"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="./index.html">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>Peaceful <strong>Cloud Console</strong></span>
+      </a>
+      <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="site-nav">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+      </button>
+      <nav class="site-nav" id="site-nav" aria-label="Primary navigation">
+        <a href="./index.html" aria-current="page">Overview</a>
+        <a href="#features">Features</a>
+        <a href="./installation.html">Installation</a>
+        <a href="./management.html">Management</a>
+        <a class="nav-cta" href="https://github.com/PeacefullCloud/cloud-console" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <span class="eyebrow">Single-binary Go console for Incus</span>
+          <h1>Cloud-style control for your own Incus server</h1>
+          <p class="hero-lead">
+            Peaceful Cloud Console gives you a clean, Lightsail-style web interface to launch and operate Incus containers and virtual machines on a single host—complete with browser terminal, SFTP file manager, Caddy HTTPS, and S3 backups.
+          </p>
+          <div class="btn-row">
+            <a class="btn btn-primary" href="./installation.html">Install &amp; Deploy</a>
+            <a class="btn btn-secondary" href="#features">Explore Features</a>
+          </div>
+          <div class="hero-meta">
+            <span>Go + HTMX + SQLite</span>
+            <span>Incus Unix socket only</span>
+            <span>No Redis or external broker</span>
+          </div>
+        </div>
+        <div class="hero-shot">
+          <button class="shot-frame" type="button" data-caption="Getting started &amp; main dashboard">
+            <img src="./img/Getting-started%20Mian%20dashboard-%C2%B7-Peaceful-Cloud-Console.webp"
+                 alt="Peaceful Cloud Console main dashboard showing fleet summary, host capacity, and quick actions"
+                 width="1905" height="942" fetchpriority="high">
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" aria-labelledby="how-it-works-heading">
+      <div class="container">
+        <div class="section-head">
+          <h2 id="how-it-works-heading">How it works</h2>
+          <p>Three focused layers keep infrastructure in Incus, state in SQLite, and public routing in Caddy.</p>
+        </div>
+        <div class="grid-3">
+          <article class="card">
+            <span class="step-badge">1. Web Console</span>
+            <h3>Go + HTMX + SQLite</h3>
+            <p>One static binary embeds all HTML templates, CSS, and terminal assets. SQLite stores only metadata: users, sessions, domains, metrics, and audit logs.</p>
+          </article>
+          <article class="card">
+            <span class="step-badge">2. Infrastructure</span>
+            <h3>Incus over Unix Socket</h3>
+            <p>Talks directly to <code>incusd</code> over its local Unix socket for containers, VMs, ZFS storage pools, snapshots, and live exec terminals. Incus stays the source of truth.</p>
+          </article>
+          <article class="card">
+            <span class="step-badge">3. Public Edge</span>
+            <h3>Caddy &amp; Dedicated IPs</h3>
+            <p>Instances run on a private bridge while Caddy handles automatic Let's Encrypt HTTPS for custom domains, alongside optional 1:1 dedicated public IP forwarding.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features" aria-labelledby="features-heading">
+      <div class="container">
+        <div class="section-head">
+          <h2 id="features-heading">Features &amp; walkthrough</h2>
+          <p>Arranged in the natural workflow—from launching your first instance to networking, backups, and access security. Click any screenshot to inspect it full-size.</p>
+        </div>
+
+        <div class="feature-list">
+          <article class="feature-item">
+            <div class="feature-body">
+              <span class="feature-num">01 / Dashboard</span>
+              <h3>Getting started &amp; host overview</h3>
+              <p>See running instances, CPU/memory/storage utilization, recent activity, and quick onboarding actions from one screen.</p>
+              <ul class="feature-points">
+                <li>Live host capacity and resource totals</li>
+                <li>Quick links to create instances, SSH keys, and domains</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="01 — Getting started &amp; main dashboard">
+                <img src="./img/Getting-started%20Mian%20dashboard-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Main dashboard and getting started view in Peaceful Cloud Console"
+                     width="1905" height="942" loading="lazy">
+              </button>
+              <figcaption>Getting started &amp; main dashboard</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item reverse">
+            <div class="feature-body">
+              <span class="feature-num">02 / Fleet</span>
+              <h3>Instances list &amp; lifecycle actions</h3>
+              <p>Search and filter containers and virtual machines, inspect private and dedicated IPs, and run start, stop, or reboot actions.</p>
+              <ul class="feature-points">
+                <li>Strict per-tenant ownership isolation across operators and viewers</li>
+                <li>Instant jump to web console, metrics, or storage</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="02 — Instances fleet overview">
+                <img src="./img/Instances%20%20Page%20-%20Peaceful-Cloud-Console.webp"
+                     alt="Instances listing page showing running containers, virtual machines, IP addresses, and status"
+                     width="1920" height="942" loading="lazy">
+              </button>
+              <figcaption>Instances overview page</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item">
+            <div class="feature-body">
+              <span class="feature-num">03 / Create — Step 1</span>
+              <h3>Choose OS or application blueprint</h3>
+              <p>Provision fresh Linux distributions or prebuilt application images from a curated blueprint catalog.</p>
+              <ul class="feature-points">
+                <li>Supports OS images (Ubuntu, Debian, Alpine, etc.) and custom app aliases</li>
+                <li>Works identically for LXC containers and QEMU virtual machines</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="03 — Create an instance: choose OS">
+                <img src="./img/Create-an-instance%20chosoe%20OS%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Create instance wizard step for choosing operating system and blueprint"
+                     width="1905" height="942" loading="lazy">
+              </button>
+              <figcaption>Create instance — OS &amp; blueprint selection</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item reverse">
+            <div class="feature-body">
+              <span class="feature-num">04 / Create — Step 2</span>
+              <h3>Choose size, workload type &amp; storage</h3>
+              <p>Pick preset compute plans or customize vCPU, RAM, disk size, and target storage pool before launch.</p>
+              <ul class="feature-points">
+                <li>Select container or full VM virtualization per workload</li>
+                <li>Enforces host-wide and per-user instance quotas</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="04 — Create an instance: choose size and type">
+                <img src="./img/Create-an-instance%20choose%20size%20and%20type-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Create instance wizard step for selecting compute size, container or VM type, and storage"
+                     width="1905" height="942" loading="lazy">
+              </button>
+              <figcaption>Create instance — size &amp; virtualization type</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item">
+            <div class="feature-body">
+              <span class="feature-num">05 / Create — Step 3</span>
+              <h3>Attach SSH keys &amp; launch script</h3>
+              <p>Inject saved public keys from your vault, optionally pass cloud-init / startup scripts, and review the launch summary.</p>
+              <ul class="feature-points">
+                <li>Creates an unprivileged <code>cloud-user</code> account with passwordless sudo</li>
+                <li>Tracks provisioning progress live via background jobs</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="05 — Create an instance: SSH key and launch script">
+                <img src="./img/Create-an-instance-%20Key%20and%20launch%20Script%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Create instance wizard step for attaching SSH keys and startup launch script"
+                     width="1905" height="942" loading="lazy">
+              </button>
+              <figcaption>Create instance — SSH keys &amp; launch script</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item reverse">
+            <div class="feature-body">
+              <span class="feature-num">06 / Instance Control</span>
+              <h3>Instance details &amp; historical metrics</h3>
+              <p>Inspect CPU, memory, disk, and network charts across 1h to 30-day windows alongside storage, domains, and configuration tabs.</p>
+              <ul class="feature-points">
+                <li>Built-in metric sampling stored locally in SQLite</li>
+                <li>In-place resize, rename, rebuild, and owner assignment</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="06 — Instance details &amp; metrics">
+                <img src="./img/Instance%20Details%20Page-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Instance details page with live status, resource usage metrics, and management tabs"
+                     width="1904" height="942" loading="lazy">
+              </button>
+              <figcaption>Instance details &amp; metrics</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item">
+            <div class="feature-body">
+              <span class="feature-num">07 / Shell &amp; Files</span>
+              <h3>Browser terminal &amp; SFTP file manager</h3>
+              <p>Open a WebAssembly-powered interactive shell and side-by-side SFTP file browser directly inside the instance over Incus exec—no open SSH port required.</p>
+              <ul class="feature-points">
+                <li>Parallel file uploads, downloads, copy/paste, and path insertion</li>
+                <li>Strict origin checks, idle timeouts, and session-bound SFTP cleanup</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="07 — Web terminal with SFTP file manager">
+                <img src="./img/Terminal%20with%20File%20Manager-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Interactive web terminal alongside the collapsible SFTP file manager panel"
+                     width="1904" height="939" loading="lazy">
+              </button>
+              <figcaption>Web terminal with integrated SFTP file manager</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item reverse">
+            <div class="feature-body">
+              <span class="feature-num">08 / Networking</span>
+              <h3>Domains, dedicated IPs &amp; port forwarding</h3>
+              <p>Route HTTPS domains through Caddy, bind 1:1 dedicated public IPs from an admin-managed pool, or expose individual TCP/UDP ports.</p>
+              <ul class="feature-points">
+                <li>Automatic Let's Encrypt TLS certificates for attached domains</li>
+                <li>Per-instance L2/L3 bridge filtering prevents cross-tenant spoofing</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="08 — Instance networking, domains, and dedicated IPs">
+                <img src="./img/Instance%20Networking-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Instance networking tab showing private IP, dedicated public IP assignment, domains, and port forwards"
+                     width="1904" height="942" loading="lazy">
+              </button>
+              <figcaption>Instance networking, domains &amp; port forwarding</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item">
+            <div class="feature-body">
+              <span class="feature-num">09 / Snapshots</span>
+              <h3>Instant copy-on-write snapshots</h3>
+              <p>Take fast local rollback points before upgrades or configuration changes, and automate recurring snapshots with retention pruning.</p>
+              <ul class="feature-points">
+                <li>One-click restore or delete directly from the instance tab</li>
+                <li>Optional scheduled <code>auto-*</code> snapshots with configurable retention</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="09 — Instance snapshots">
+                <img src="./img/Instance%20Snapshots-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Instance snapshots view for creating and restoring copy-on-write rollback points"
+                     width="1921" height="942" loading="lazy">
+              </button>
+              <figcaption>Instance snapshots</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item reverse">
+            <div class="feature-body">
+              <span class="feature-num">10 / Backups</span>
+              <h3>Portable backups &amp; S3 off-site archives</h3>
+              <p>Export full instance archives to local disk and replicate them to any S3-compatible object store (AWS S3, MinIO, R2, B2) or Restic repository.</p>
+              <ul class="feature-points">
+                <li>Restore archives into existing or new instances</li>
+                <li>Survives single-host disk loss when off-site storage is enabled</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="10 — Portable and S3 off-site backups">
+                <img src="./img/Backups-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Backups page displaying local and S3-backed instance archives"
+                     width="1920" height="942" loading="lazy">
+              </button>
+              <figcaption>Portable &amp; S3 off-site backups</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item">
+            <div class="feature-body">
+              <span class="feature-num">11 / SSH Vault</span>
+              <h3>Tenant-isolated SSH key vault</h3>
+              <p>Store existing public keys or generate fresh Ed25519 keypairs in the browser—the private key is shown once and never persisted.</p>
+              <ul class="feature-points">
+                <li>Each user manages their own keys with fingerprint verification</li>
+                <li>Selectable during instance creation or admin provisioning</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="11 — SSH keys management">
+                <img src="./img/SSH-keys%20management-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="SSH key vault showing stored public keys, fingerprints, and Ed25519 generator"
+                     width="1920" height="942" loading="lazy">
+              </button>
+              <figcaption>SSH keys management</figcaption>
+            </figure>
+          </article>
+
+          <article class="feature-item reverse">
+            <div class="feature-body">
+              <span class="feature-num">12 / Security</span>
+              <h3>Two-factor authentication, RBAC &amp; OIDC SSO</h3>
+              <p>Protect every account with TOTP authenticator codes and one-time recovery codes, alongside encrypted OIDC SSO and multi-session management.</p>
+              <ul class="feature-points">
+                <li>Roles: <code>admin</code>, <code>operator</code>, and <code>viewer</code></li>
+                <li>Audit logging, login throttling, and active device revocation</li>
+              </ul>
+            </div>
+            <figure class="feature-media">
+              <button class="shot-frame" type="button" data-caption="12 — 2FA OTP and security settings">
+                <img src="./img/2FA%20OTP%20Settings-%C2%B7-Peaceful-Cloud-Console.webp"
+                     alt="Security settings page showing TOTP two-factor authentication setup and active sessions"
+                     width="1905" height="942" loading="lazy">
+              </button>
+              <figcaption>2FA OTP &amp; security settings</figcaption>
+            </figure>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" aria-labelledby="get-started-heading">
+      <div class="container">
+        <div class="grid-2">
+          <div class="card">
+            <h2 id="get-started-heading">Install &amp; deploy in minutes</h2>
+            <p>Build a single static Go binary with embedded assets, point it at your Incus socket, and run it behind Caddy and systemd.</p>
+            <div class="code-wrap">
+              <pre><code>git clone https://github.com/PeacefullCloud/cloud-console
+cd cloud-console
+CGO_ENABLED=0 go build -trimpath -o cloud-console .
+cp .env.sample .env
+./cloud-console</code></pre>
+            </div>
+            <a class="btn btn-primary" href="./installation.html">Read Installation Guide</a>
+          </div>
+          <div class="card">
+            <h2>Operate &amp; secure in production</h2>
+            <p>Learn how tenant isolation, OIDC SSO, dedicated public IPs, scheduled snapshots, S3 backups, Prometheus metrics, and upgrades work.</p>
+            <div class="btn-row" style="margin-top: 18px;">
+              <a class="btn btn-secondary" href="./management.html">Read Management Guide</a>
+              <a class="btn btn-secondary" href="./installation.html#env-vars">Environment Variables</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div>Peaceful Cloud Console · Built with Go, Incus, SQLite &amp; Caddy</div>
+      <div class="footer-links">
+        <a href="./index.html">Overview</a>
+        <a href="./installation.html">Installation</a>
+        <a href="./management.html">Management</a>
+        <a href="https://github.com/PeacefullCloud/cloud-console" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-caption">
+    <div class="lightbox-inner">
+      <div class="lightbox-bar">
+        <span class="lightbox-caption" id="lightbox-caption"></span>
+        <button class="lightbox-close" id="lightbox-close" type="button">Close</button>
+      </div>
+      <img id="lightbox-img" src="" alt="">
+    </div>
+  </div>
+
+  <script src="./assets/site.js" defer></script>
+</body>
+</html>

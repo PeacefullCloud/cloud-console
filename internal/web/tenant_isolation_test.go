@@ -525,9 +525,10 @@ func TestNetworkingHostDetailsAreAdminOnly(t *testing.T) {
 
 	data := networkingData{
 		baseData: baseData{Title: "Networking", User: &operator},
-		Networks: []networkInfo{{
-			Name: "incusbr0", Type: "bridge", Managed: "yes", Address: "10.10.0.1/24", UsedBy: 7,
-		}},
+		Networks: []networkInfo{
+			{Name: "incusbr0", Type: "bridge", Managed: "yes", Address: "10.10.0.1/24", UsedBy: 7},
+			{Name: "lo", Type: "loopback", Managed: "no", Address: "127.0.0.1/8", UsedBy: 0},
+		},
 		CaddyEnabled: true,
 		CaddyPath:    "/etc/caddy/Caddyfile",
 		CaddyAdmin:   "http://127.0.0.1:2019",
@@ -546,6 +547,15 @@ func TestNetworkingHostDetailsAreAdminOnly(t *testing.T) {
 	if strings.Contains(out, `class="num"`) || strings.Contains(out, ">7<") {
 		t.Error("a tenant can see how many instances use a host network")
 	}
+	if strings.Contains(out, "incusbr0") || strings.Contains(out, "10.10.0.1/24") || strings.Contains(out, "127.0.0.1/8") {
+		t.Error("a tenant can see host network names or subnets")
+	}
+	if strings.Count(out, "Private network") != 1 {
+		t.Errorf("expected only 1 managed private network row for tenant, got %d", strings.Count(out, "Private network"))
+	}
+	if !strings.Contains(out, "Connectivity") || !strings.Contains(out, "Internal · outbound NAT") {
+		t.Error("tenant networks table missing Connectivity column")
+	}
 	if strings.Contains(out, "Config path") || strings.Contains(out, "/etc/caddy/Caddyfile") {
 		t.Error("a tenant can see host Caddy details")
 	}
@@ -554,6 +564,9 @@ func TestNetworkingHostDetailsAreAdminOnly(t *testing.T) {
 	out = render()
 	if !strings.Contains(out, `class="num"`) || !strings.Contains(out, ">7<") {
 		t.Error("the administrator cannot see network usage counts")
+	}
+	if !strings.Contains(out, "incusbr0") || !strings.Contains(out, "10.10.0.1/24") {
+		t.Error("the administrator cannot see network name or subnet")
 	}
 	if strings.Contains(out, "/etc/caddy/Caddyfile") || strings.Contains(out, "Config path") {
 		t.Error("host routing details must never be rendered")

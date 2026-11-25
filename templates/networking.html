@@ -141,15 +141,32 @@
     {{if .Networks}}
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Network</th>{{if $admin}}<th class="num">Instances</th>{{end}}</tr></thead>
+        {{if $admin}}
+        <thead><tr><th>Network</th><th>Type</th><th>Managed</th><th>Address</th><th class="num">Instances</th></tr></thead>
         <tbody>
           {{range .Networks}}
           <tr>
-            <td><strong>Private network</strong>{{if .Description}}<div class="snap-meta">{{.Description}}</div>{{end}}</td>
-            {{if $admin}}<td class="num">{{.UsedBy}}</td>{{end}}
+            <td><strong>{{.Name}}</strong>{{if .Description}}<div class="snap-meta">{{.Description}}</div>{{end}}</td>
+            <td class="muted">{{.Type}}</td>
+            <td class="muted">{{.Managed}}</td>
+            <td class="mono">{{if .Address}}{{.Address}}{{else}}—{{end}}</td>
+            <td class="num">{{.UsedBy}}</td>
           </tr>
           {{end}}
         </tbody>
+        {{else}}
+        <thead><tr><th>Network</th><th>Connectivity</th></tr></thead>
+        <tbody>
+          {{range .Networks}}
+          {{if eq .Managed "yes"}}
+          <tr>
+            <td><strong>Private network</strong>{{if .Description}}<div class="snap-meta">{{.Description}}</div>{{end}}</td>
+            <td class="muted">Internal · outbound NAT</td>
+          </tr>
+          {{end}}
+          {{end}}
+        </tbody>
+        {{end}}
       </table>
     </div>
     {{else}}
