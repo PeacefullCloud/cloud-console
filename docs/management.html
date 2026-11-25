@@ -117,8 +117,22 @@ Go Backend (cloud-console)
         <ul>
           <li><strong>Sessions &amp; CSRF:</strong> 32-byte random session tokens are SHA-256 hashed before storage; <code>HttpOnly</code>, <code>SameSite=Lax</code> cookies and double-submit CSRF tokens guard every mutating request.</li>
           <li><strong>Two-Factor Authentication (TOTP):</strong> Users can enroll an authenticator app and receive 8 one-time recovery codes. TOTP secrets are encrypted at rest with <code>CONSOLE_SECRET_KEY</code> (or <code>&lt;data_dir&gt;/secret.key</code>).</li>
-          <li><strong>OIDC Single Sign-On:</strong> Admins can configure OIDC providers under <strong>Settings → SSO</strong>. Set <code>CONSOLE_SSO_KEY</code> before adding providers so client secrets are encrypted at rest.</li>
           <li><strong>Rate limiting:</strong> Failed password and 2FA verifications are throttled in memory by username and client IP.</li>
+        </ul>
+
+        <h3>OpenID Connect (OIDC) Single Sign-On</h3>
+        <p>Administrators can configure Google, Microsoft, Keycloak, or any standard OpenID Connect provider under <strong>Settings → SSO</strong>:</p>
+        <ul>
+          <li><strong>Encryption key required:</strong> Set <code>CONSOLE_SSO_KEY</code> and restart the console before adding providers so client secrets are encrypted at rest.</li>
+          <li><strong>Callback URL:</strong> Register the exact callback URL shown on each provider card (derived from <code>CONSOLE_BASE_URL</code>, e.g. <code>https://console.example.com/auth/sso/1/callback</code>) in your identity provider app.</li>
+          <li><strong>Account provisioning policies:</strong>
+            <ul>
+              <li><em>Linked accounts only</em> (default): no new accounts are created automatically; existing users link their SSO identity from Settings.</li>
+              <li><em>Verified email domains</em>: automatically creates accounts with the configured default role (<code>viewer</code>, <code>operator</code>, or <code>admin</code>) when the provider marks the email verified and it matches <code>Allowed email domains</code>.</li>
+              <li><em>Anyone the provider signs in</em>: creates an account with the default role for any authenticated user from that provider.</li>
+            </ul>
+          </li>
+          <li><strong>Provider MFA enforcement:</strong> Enable <em>Require multi-factor at the provider</em> to reject OIDC logins that do not carry an MFA authentication claim.</li>
         </ul>
       </section>
 

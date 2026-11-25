@@ -39,8 +39,8 @@ On first run, if `CONSOLE_ADMIN_PASSWORD` is unset, an initial `admin` password 
 
 ## Documentation
 
-Full guides and screenshots live in the [`docs/`](./docs/index.html) website:
+Full guides and screenshots are published at [peacefullcloud.github.io/cloud-console](https://peacefullcloud.github.io/cloud-console/index.html):
 
-* [Overview & Features](./docs/index.html)
-* [Installation, Environment Variables & Deployment Guide](./docs/installation.html)
-* [Architecture & Management Guide](./docs/management.html)
+* [Overview & Features](https://peacefullcloud.github.io/cloud-console/index.html)
+* [Installation, Environment Variables & Deployment Guide](https://peacefullcloud.github.io/cloud-console/installation.html)
+* [Architecture & Management Guide](https://peacefullcloud.github.io/cloud-console/management.html)

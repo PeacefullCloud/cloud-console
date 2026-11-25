@@ -1,5 +1,6 @@
 # Build output
 /cloud-console
+/dist/
 *.exe
 
 # Runtime data: SQLite database, backup archives

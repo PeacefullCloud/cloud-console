@@ -188,7 +188,7 @@ openssl rand -hex 32   # use for CONSOLE_SECRET_KEY</code></pre>
               <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>CONSOLE_SSO_KEY</code></td><td><em>(unset)</em></td><td>64-hex key (or passphrase / <code>argon2:...</code>) used to encrypt OIDC client secrets.</td></tr>
+              <tr><td><code>CONSOLE_SSO_KEY</code></td><td><em>(unset)</em></td><td>64-hex key (or passphrase / <code>argon2:...</code>) required to encrypt OIDC client secrets at rest. Set alongside <code>CONSOLE_BASE_URL</code> before adding SSO providers.</td></tr>
               <tr><td><code>CONSOLE_SECRET_KEY</code></td><td><code>&lt;data&gt;/secret.key</code></td><td>Key encrypting TOTP seeds at rest. Auto-generated in data dir if unset.</td></tr>
             </tbody>
           </table>
